@@ -359,6 +359,7 @@ void MainWindow::setCurrentFolder(const QString &path)
     ui->folderTreeView->expand(treeIndex);
 
     contentModel->setDirectory(path);
+    ui->folderContentView->scrollToTop();
 
     clearDetailsPanel();
     updateStatusBarItemCount();
