@@ -4,6 +4,7 @@
 
 #include <QFrame>
 #include <QLabel>
+#include <QLoggingCategory>
 #include <QResizeEvent>
 #include <QScrollArea>
 #include <QScrollBar>
@@ -77,6 +78,7 @@ void PdfViewerWidget::onDocumentLoaded(bool valid, const std::shared_ptr<PdfDocu
     m_document = document;
 
     if (!valid) {
+        qWarning() << "Failed to open PDF for viewing:" << m_filePath;
         auto *errorLabel = new QLabel(tr("Could not open this PDF file."), m_pagesContainer);
         errorLabel->setAlignment(Qt::AlignCenter);
         m_pagesContainer->layout()->addWidget(errorLabel);
@@ -196,5 +198,7 @@ void PdfViewerWidget::onPageRendered(int pageIndex, const QImage &image)
 
     if (!image.isNull())
         m_pageLabels[pageIndex]->setPixmap(QPixmap::fromImage(image));
+    else
+        qWarning() << "Failed to render page" << pageIndex << "of" << m_filePath;
     m_pageRendered[pageIndex] = true;
 }

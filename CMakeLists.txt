@@ -52,6 +52,8 @@ find_package(PDFium REQUIRED PATHS ${pdfium_SOURCE_DIR} NO_DEFAULT_PATH)
 
 qt_add_executable(cualpdf
     src/main.cpp
+    src/logger.cpp
+    src/logger.h
     src/mainwindow.cpp
     src/mainwindow.h
     src/mainwindow.ui

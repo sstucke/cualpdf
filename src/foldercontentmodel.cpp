@@ -8,6 +8,7 @@
 #include <QFileInfo>
 #include <QIcon>
 #include <QLocale>
+#include <QLoggingCategory>
 
 FolderContentModel::FolderContentModel(QObject *parent)
     : QAbstractListModel(parent)
@@ -104,6 +105,7 @@ const FolderContentModel::PdfInfo &FolderContentModel::pdfInfoFor(const Entry &e
         if (!image.isNull())
             info.thumbnail = QPixmap::fromImage(image);
     } else {
+        qWarning() << "Could not read PDF:" << entry.absolutePath;
         info.failed = true;
     }
 

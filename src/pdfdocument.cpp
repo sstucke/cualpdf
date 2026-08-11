@@ -3,6 +3,7 @@
 #include <fpdfview.h>
 
 #include <QByteArray>
+#include <QLoggingCategory>
 #include <QMutex>
 #include <QMutexLocker>
 
@@ -52,6 +53,9 @@ PdfDocument::PdfDocument(const QString &filePath)
     const QByteArray path = filePath.toUtf8();
     const QMutexLocker locker(&pdfiumMutex());
     m_document = FPDF_LoadDocument(path.constData(), nullptr);
+    if (!m_document)
+        qWarning() << "PDFium failed to load:" << filePath
+                   << "(error" << FPDF_GetLastError() << ")";
 }
 
 PdfDocument::~PdfDocument()
@@ -91,8 +95,11 @@ QImage PdfDocument::renderPage(int pageIndex, int targetWidthPx) const
     const QMutexLocker locker(&pdfiumMutex());
     const auto document = static_cast<FPDF_DOCUMENT>(m_document);
     const FPDF_PAGE page = FPDF_LoadPage(document, pageIndex);
-    if (!page)
+    if (!page) {
+        qWarning() << "PDFium failed to load page" << pageIndex
+                   << "(error" << FPDF_GetLastError() << ")";
         return {};
+    }
 
     const double pageWidthPt = FPDF_GetPageWidthF(page);
     const double pageHeightPt = FPDF_GetPageHeightF(page);

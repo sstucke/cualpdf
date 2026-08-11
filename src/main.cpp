@@ -1,3 +1,4 @@
+#include "logger.h"
 #include "mainwindow.h"
 #include "pdfdocument.h"
 
@@ -11,6 +12,8 @@ int main(int argc, char *argv[])
     QApplication::setOrganizationName("cualpdf");
     QApplication::setApplicationName("cualpdf");
     QApplication::setApplicationVersion("0.1.0");
+
+    Logger::install();
 
     // QTranslator::load tries the full locale name first (e.g. "es_AR"),
     // then progressively shorter forms (e.g. "es"), and simply fails
