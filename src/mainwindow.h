@@ -69,6 +69,7 @@ private:
     QActionGroup *viewModeActionGroup = nullptr;
     QAbstractItemDelegate *defaultContentDelegate = nullptr;
     QAbstractItemDelegate *detailsContentDelegate = nullptr;
+    QAbstractItemDelegate *gridContentDelegate = nullptr;
     AppSettings appSettings;
     QString currentFolderPath;
     QStringList recentFiles;
@@ -82,5 +83,5 @@ private:
     static constexpr int kCompactIconSize = 20;
     static constexpr int kMaxRecentFiles = 10;
     static constexpr int kGridCellPadding = 8;
-    static constexpr int kGridTextHeight = 56;
+    static constexpr int kGridTextHeight = 80; // room for a wrapped name plus a page-count line
 };

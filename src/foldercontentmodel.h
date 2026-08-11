@@ -21,6 +21,7 @@ public:
         FilePathRole = Qt::UserRole + 1,
         IsDirRole,
         MetadataRole,
+        PageCountRole,
     };
 
     explicit FolderContentModel(QObject *parent = nullptr);
@@ -51,6 +52,7 @@ private:
     void startNextLoad() const;
     void onThumbnailLoaded(const QString &path, PdfInfo info);
     QString metadataFor(const Entry &entry) const;
+    QString pagesTextFor(const Entry &entry) const;
 
     QString m_directory;
     QVector<Entry> m_entries;

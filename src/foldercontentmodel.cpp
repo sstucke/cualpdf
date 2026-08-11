@@ -2,6 +2,7 @@
 
 #include "pdfdocument.h"
 
+#include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
 #include <QFileIconProvider>
@@ -9,6 +10,7 @@
 #include <QIcon>
 #include <QLocale>
 #include <QLoggingCategory>
+#include <QPointer>
 #include <QThread>
 
 FolderContentModel::FolderContentModel(QObject *parent)
@@ -102,6 +104,14 @@ QVariant FolderContentModel::data(const QModelIndex &idx, int role) const
             return metadataFor(entry);
         return QVariant();
     }
+    case PageCountRole: {
+        if (entry.isDir)
+            return QVariant();
+        const auto cached = m_pdfInfoCache.constFind(entry.absolutePath);
+        if (cached != m_pdfInfoCache.constEnd())
+            return pagesTextFor(entry);
+        return QVariant();
+    }
     default:
         return {};
     }
@@ -130,7 +140,16 @@ void FolderContentModel::startNextLoad() const
 
     ++m_activeLoads;
 
-    QThread *thread = QThread::create([this, path, thumbSize]() {
+    // Posting through qApp (always alive) rather than `this`, and checking
+    // liveness via QPointer once back on the GUI thread: invokeMethod only
+    // guarantees a previously-*posted* call won't fire after its context is
+    // destroyed, not that *posting* a new one against an already-destroyed
+    // context is safe — posting still has to read that context's thread
+    // affinity, which is a use-after-free if `this` is gone by the time this
+    // worker thread finishes. See PdfViewerWidget::startLoading() for the
+    // same pattern (found via a real crash's backtrace).
+    const QPointer<FolderContentModel> weakSelf(const_cast<FolderContentModel *>(this));
+    QThread *thread = QThread::create([weakSelf, path, thumbSize]() {
         PdfInfo info;
         info.loaded = true;
 
@@ -145,11 +164,13 @@ void FolderContentModel::startNextLoad() const
             info.failed = true;
         }
 
-        QMetaObject::invokeMethod(const_cast<FolderContentModel *>(this),
-                                  [this, path, info]() {
-                                      const_cast<FolderContentModel *>(this)->onThumbnailLoaded(path, info);
-                                  },
-                                  Qt::QueuedConnection);
+        QMetaObject::invokeMethod(
+            qApp,
+            [weakSelf, path, info]() {
+                if (weakSelf)
+                    weakSelf->onThumbnailLoaded(path, info);
+            },
+            Qt::QueuedConnection);
     });
     connect(thread, &QThread::finished, thread, &QThread::deleteLater);
     thread->start();
@@ -164,7 +185,7 @@ void FolderContentModel::onThumbnailLoaded(const QString &path, PdfInfo info)
     for (int i = 0; i < m_entries.size(); ++i) {
         if (m_entries[i].absolutePath == path) {
             m_pdfInfoCache.insert(path, std::move(info));
-            emit dataChanged(index(i), index(i), {Qt::DecorationRole, MetadataRole});
+            emit dataChanged(index(i), index(i), {Qt::DecorationRole, MetadataRole, PageCountRole});
             break;
         }
     }
@@ -172,12 +193,16 @@ void FolderContentModel::onThumbnailLoaded(const QString &path, PdfInfo info)
     startNextLoad();
 }
 
-QString FolderContentModel::metadataFor(const Entry &entry) const
+QString FolderContentModel::pagesTextFor(const Entry &entry) const
 {
     const auto cached = m_pdfInfoCache.constFind(entry.absolutePath);
     const int pageCount = (cached != m_pdfInfoCache.constEnd()) ? cached->pageCount : -1;
-    const QString pages =
-        pageCount >= 0 ? tr("Pages: %1").arg(pageCount) : tr("Pages: Unknown");
+    return pageCount >= 0 ? tr("Pages: %1").arg(pageCount) : tr("Pages: Unknown");
+}
+
+QString FolderContentModel::metadataFor(const Entry &entry) const
+{
+    const QString pages = pagesTextFor(entry);
 
     const QFileInfo fileInfo(entry.absolutePath);
     const QDateTime created = fileInfo.birthTime();

@@ -6,6 +6,8 @@
 #include <QLocale>
 #include <QTranslator>
 
+#include <exception>
+
 int main(int argc, char *argv[])
 {
     QApplication application(argc, argv);
@@ -26,12 +28,19 @@ int main(int argc, char *argv[])
     PdfDocument::initializeLibrary();
 
     int result = 0;
-    {
+    try {
         // Scoped so MainWindow (and any PdfDocument instances it owns, e.g.
-        // open viewer tabs) is destroyed before the library shuts down.
+        // open viewer tabs) is destroyed before the library shuts down, even
+        // when an exception unwinds out of this block.
         MainWindow window;
         window.show();
         result = application.exec();
+    } catch (const std::exception &e) {
+        qCritical() << "Unhandled exception:" << e.what();
+        result = 1;
+    } catch (...) {
+        qCritical() << "Unhandled unknown exception";
+        result = 1;
     }
 
     PdfDocument::shutdownLibrary();

@@ -2,9 +2,11 @@
 
 #include "pdfdocument.h"
 
+#include <QCoreApplication>
 #include <QFrame>
 #include <QLabel>
 #include <QLoggingCategory>
+#include <QPointer>
 #include <QResizeEvent>
 #include <QScrollArea>
 #include <QScrollBar>
@@ -46,9 +48,21 @@ void PdfViewerWidget::startLoading()
 
     // The worker owns its own PdfDocument handle; only the (thread-safe,
     // ref-counted) result crosses back to the GUI thread, so the file is
-    // never opened twice. QMetaObject::invokeMethod with `this` as context
-    // safely no-ops if the widget is destroyed before the load finishes.
-    QThread *thread = QThread::create([this, path]() {
+    // never opened twice.
+    //
+    // The invokeMethod context is qApp, not `this`: QMetaObject::invokeMethod
+    // only guarantees a *previously posted* call won't fire after its
+    // context is destroyed. It does NOT guarantee that *posting* a new call
+    // against an already-destroyed context is safe — posting still has to
+    // read that context's thread affinity, which is a use-after-free if the
+    // widget (e.g. the details-panel preview, replaced every time the
+    // selection changes) was deleted while this worker was still running.
+    // qApp is always alive for the process's lifetime, so posting through it
+    // is always safe; QPointer<PdfViewerWidget> is what actually detects
+    // whether the widget is still there, checked once we're back on the GUI
+    // thread inside the queued call itself.
+    const QPointer<PdfViewerWidget> weakSelf(this);
+    QThread *thread = QThread::create([weakSelf, path]() {
         auto document = std::make_shared<PdfDocument>(path);
         const bool valid = document->isValid() && document->pageCount() > 0;
 
@@ -61,7 +75,11 @@ void PdfViewerWidget::startLoading()
         }
 
         QMetaObject::invokeMethod(
-            this, [this, valid, document, pageSizes]() { onDocumentLoaded(valid, document, pageSizes); },
+            qApp,
+            [weakSelf, valid, document, pageSizes]() {
+                if (weakSelf)
+                    weakSelf->onDocumentLoaded(valid, document, pageSizes);
+            },
             Qt::QueuedConnection);
     });
     connect(thread, &QThread::finished, thread, &QThread::deleteLater);
@@ -180,10 +198,16 @@ void PdfViewerWidget::scheduleRender(int pageIndex, int widthPx)
     m_pagesLoading.insert(pageIndex);
 
     const std::shared_ptr<PdfDocument> document = m_document;
-    QThread *thread = QThread::create([this, document, pageIndex, widthPx]() {
+    const QPointer<PdfViewerWidget> weakSelf(this);
+    QThread *thread = QThread::create([weakSelf, document, pageIndex, widthPx]() {
         const QImage image = document->renderPage(pageIndex, widthPx);
         QMetaObject::invokeMethod(
-            this, [this, pageIndex, image]() { onPageRendered(pageIndex, image); }, Qt::QueuedConnection);
+            qApp,
+            [weakSelf, pageIndex, image]() {
+                if (weakSelf)
+                    weakSelf->onPageRendered(pageIndex, image);
+            },
+            Qt::QueuedConnection);
     });
     connect(thread, &QThread::finished, thread, &QThread::deleteLater);
     thread->start();

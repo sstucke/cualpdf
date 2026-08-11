@@ -65,6 +65,8 @@ qt_add_executable(cualpdf
     src/pdfviewerwidget.h
     src/pdflistitemdelegate.cpp
     src/pdflistitemdelegate.h
+    src/pdfgriditemdelegate.cpp
+    src/pdfgriditemdelegate.h
     src/appsettings.cpp
     src/appsettings.h
 )

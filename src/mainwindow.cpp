@@ -2,6 +2,7 @@
 #include "ui_mainwindow.h"
 
 #include "foldercontentmodel.h"
+#include "pdfgriditemdelegate.h"
 #include "pdflistitemdelegate.h"
 #include "pdfviewerwidget.h"
 
@@ -63,6 +64,7 @@ MainWindow::MainWindow(QWidget *parent)
     ui->folderContentView->setModel(contentModel);
     defaultContentDelegate = new QStyledItemDelegate(ui->folderContentView);
     detailsContentDelegate = new PdfListItemDelegate(ui->folderContentView);
+    gridContentDelegate = new PdfGridItemDelegate(ui->folderContentView);
 
     zoomSlider->setRange(kMinIconSize, kMaxIconSize);
     zoomSlider->setValue(kDefaultThumbnailSize);
@@ -289,7 +291,7 @@ void MainWindow::applyContentViewMode(AppSettings::ContentViewMode mode)
     switch (mode) {
     case AppSettings::ContentViewMode::Thumbnails: {
         const int thumbSize = zoomSlider->value();
-        ui->folderContentView->setItemDelegate(defaultContentDelegate);
+        ui->folderContentView->setItemDelegate(gridContentDelegate);
         ui->folderContentView->setViewMode(QListView::IconMode);
         ui->folderContentView->setFlow(QListView::LeftToRight);
         ui->folderContentView->setWrapping(true);
@@ -358,6 +360,8 @@ void MainWindow::onTabCloseRequested(int index)
 
 void MainWindow::setCurrentFolder(const QString &path)
 {
+    qInfo() << "Opening folder:" << path;
+
     if (path.isEmpty() || !QDir(path).exists())
         return;
 
@@ -459,6 +463,8 @@ void MainWindow::clearDetailsPanel()
 
 void MainWindow::openPdfViewerTab(const QString &filePath)
 {
+    qInfo() << "Opening file:" << filePath;
+
     addRecentFile(filePath);
 
     for (int i = 0; i < ui->tabWidget->count(); ++i) {
@@ -477,6 +483,8 @@ void MainWindow::openPdfViewerTab(const QString &filePath)
 
 void MainWindow::openWithSystemDefault(const QString &filePath)
 {
+    qInfo() << "Opening file with system default application:" << filePath;
+
     QDesktopServices::openUrl(QUrl::fromLocalFile(filePath));
 }
 
