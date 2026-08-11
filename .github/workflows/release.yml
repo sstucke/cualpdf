@@ -16,10 +16,13 @@ jobs:
         include:
           - os: ubuntu-latest
             name: linux
+            qt_arch: ""
           - os: windows-latest
             name: windows
+            qt_arch: win64_msvc2022_64
           - os: macos-latest
             name: macos
+            qt_arch: ""
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -29,7 +32,13 @@ jobs:
       - name: Instalar Qt
         uses: jurplel/install-qt-action@v4
         with:
-          version: "6.8.*"
+          # 6.8.x (the last release is 6.8.3) still links "-framework AGL",
+          # which macOS 26 (Tahoe) removed from its SDK, breaking macOS
+          # builds with "ld: framework 'AGL' not found" (QTBUG-137687).
+          # Fixed starting in 6.9.2/6.10.1; pinned to the latest verified
+          # 6.9.x patch available for macOS.
+          version: "6.9.3"
+          arch: ${{ matrix.qt_arch }}
           cache: true
 
       - name: Configurar
