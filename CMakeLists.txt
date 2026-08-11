@@ -27,6 +27,9 @@ set(PDFIUM_RELEASE_TAG "chromium/7999")
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64)$")
     set(PDFIUM_ASSET "pdfium-linux-x64.tgz")
     set(PDFIUM_URL_HASH "SHA256=c3af580f9df0fef9545b44115bc5ea440f286956b5f231df69fb373b8efc4f69")
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Darwin" AND CMAKE_SYSTEM_PROCESSOR STREQUAL "arm64")
+    set(PDFIUM_ASSET "pdfium-mac-arm64.tgz")
+    set(PDFIUM_URL_HASH "SHA256=e214ee33f22b2204daa765a545aee1e425d88448e6154dac95c6a06206b7437f")
 else()
     message(FATAL_ERROR
         "No PDFium prebuilt binary is wired up yet for "
