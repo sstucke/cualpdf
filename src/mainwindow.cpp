@@ -219,6 +219,7 @@ void MainWindow::onLocationEditReturnPressed()
 void MainWindow::onZoomSliderChanged(int value)
 {
     ui->folderContentView->setIconSize(QSize(value, value));
+    ui->folderContentView->setGridSize(QSize(value + 2 * kGridCellPadding, value + kGridTextHeight));
     contentModel->setThumbnailSize(value);
 }
 
@@ -275,24 +276,30 @@ void MainWindow::setupViewModeMenu()
 void MainWindow::applyContentViewMode(AppSettings::ContentViewMode mode)
 {
     switch (mode) {
-    case AppSettings::ContentViewMode::Thumbnails:
+    case AppSettings::ContentViewMode::Thumbnails: {
+        const int thumbSize = zoomSlider->value();
         ui->folderContentView->setItemDelegate(defaultContentDelegate);
         ui->folderContentView->setViewMode(QListView::IconMode);
         ui->folderContentView->setFlow(QListView::LeftToRight);
         ui->folderContentView->setWrapping(true);
         ui->folderContentView->setWordWrap(true);
-        ui->folderContentView->setUniformItemSizes(false);
+        ui->folderContentView->setUniformItemSizes(true);
         ui->folderContentView->setSpacing(12);
-        ui->folderContentView->setIconSize(QSize(zoomSlider->value(), zoomSlider->value()));
-        contentModel->setThumbnailSize(zoomSlider->value());
+        ui->folderContentView->setIconSize(QSize(thumbSize, thumbSize));
+        ui->folderContentView->setGridSize(
+            QSize(thumbSize + 2 * kGridCellPadding, thumbSize + kGridTextHeight));
+        contentModel->setThumbnailSize(thumbSize);
         zoomSlider->setEnabled(true);
         break;
+    }
     case AppSettings::ContentViewMode::Details:
         ui->folderContentView->setItemDelegate(detailsContentDelegate);
         ui->folderContentView->setViewMode(QListView::ListMode);
         ui->folderContentView->setFlow(QListView::TopToBottom);
         ui->folderContentView->setWrapping(false);
+        ui->folderContentView->setUniformItemSizes(false);
         ui->folderContentView->setSpacing(2);
+        ui->folderContentView->setGridSize(QSize());
         ui->folderContentView->setIconSize(QSize(kDetailsIconSize, kDetailsIconSize));
         contentModel->setThumbnailSize(kDetailsIconSize);
         zoomSlider->setEnabled(false);
@@ -302,7 +309,9 @@ void MainWindow::applyContentViewMode(AppSettings::ContentViewMode mode)
         ui->folderContentView->setViewMode(QListView::ListMode);
         ui->folderContentView->setFlow(QListView::TopToBottom);
         ui->folderContentView->setWrapping(false);
+        ui->folderContentView->setUniformItemSizes(false);
         ui->folderContentView->setSpacing(0);
+        ui->folderContentView->setGridSize(QSize());
         ui->folderContentView->setIconSize(QSize(kCompactIconSize, kCompactIconSize));
         contentModel->setThumbnailSize(kCompactIconSize);
         zoomSlider->setEnabled(false);

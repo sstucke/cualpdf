@@ -73,4 +73,6 @@ private:
     static constexpr int kDetailsIconSize = 48;
     static constexpr int kCompactIconSize = 20;
     static constexpr int kMaxRecentFiles = 10;
+    static constexpr int kGridCellPadding = 8;
+    static constexpr int kGridTextHeight = 56;
 };
