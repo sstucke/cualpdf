@@ -9,6 +9,7 @@
 #include <QIcon>
 #include <QLocale>
 #include <QLoggingCategory>
+#include <QThread>
 
 FolderContentModel::FolderContentModel(QObject *parent)
     : QAbstractListModel(parent)
@@ -21,6 +22,9 @@ void FolderContentModel::setDirectory(const QString &path)
 
     m_directory = path;
     m_entries.clear();
+    m_pdfInfoCache.clear();
+    m_pendingPaths.clear();
+    m_loadQueue.clear();
 
     const QDir dir(path);
     const QFileInfoList infos = dir.entryInfoList(
@@ -47,6 +51,8 @@ void FolderContentModel::setThumbnailSize(int size)
 
     m_thumbnailSize = size;
     m_pdfInfoCache.clear();
+    m_pendingPaths.clear();
+    m_loadQueue.clear();
 
     if (!m_entries.isEmpty())
         emit dataChanged(index(0), index(m_entries.size() - 1), {Qt::DecorationRole});
@@ -60,12 +66,12 @@ int FolderContentModel::rowCount(const QModelIndex &parent) const
     return m_entries.size();
 }
 
-QVariant FolderContentModel::data(const QModelIndex &index, int role) const
+QVariant FolderContentModel::data(const QModelIndex &idx, int role) const
 {
-    if (!index.isValid() || index.row() < 0 || index.row() >= m_entries.size())
+    if (!idx.isValid() || idx.row() < 0 || idx.row() >= m_entries.size())
         return {};
 
-    const Entry &entry = m_entries.at(index.row());
+    const Entry &entry = m_entries.at(idx.row());
 
     switch (role) {
     case Qt::DisplayRole:
@@ -73,9 +79,13 @@ QVariant FolderContentModel::data(const QModelIndex &index, int role) const
         return entry.fileName;
     case Qt::DecorationRole: {
         if (!entry.isDir) {
-            const PdfInfo &info = pdfInfoFor(entry);
-            if (!info.thumbnail.isNull())
-                return QIcon(info.thumbnail);
+            const auto cached = m_pdfInfoCache.constFind(entry.absolutePath);
+            if (cached != m_pdfInfoCache.constEnd()) {
+                if (!cached->thumbnail.isNull())
+                    return QIcon(cached->thumbnail);
+            } else {
+                enqueueThumbnailLoad(entry);
+            }
         }
         static QFileIconProvider iconProvider;
         return iconProvider.icon(QFileInfo(entry.absolutePath));
@@ -84,39 +94,90 @@ QVariant FolderContentModel::data(const QModelIndex &index, int role) const
         return entry.absolutePath;
     case IsDirRole:
         return entry.isDir;
-    case MetadataRole:
-        return entry.isDir ? QVariant() : QVariant(metadataFor(entry));
+    case MetadataRole: {
+        if (entry.isDir)
+            return QVariant();
+        const auto cached = m_pdfInfoCache.constFind(entry.absolutePath);
+        if (cached != m_pdfInfoCache.constEnd())
+            return metadataFor(entry);
+        return QVariant();
+    }
     default:
         return {};
     }
 }
 
-const FolderContentModel::PdfInfo &FolderContentModel::pdfInfoFor(const Entry &entry) const
+void FolderContentModel::enqueueThumbnailLoad(const Entry &entry) const
 {
-    const auto cached = m_pdfInfoCache.constFind(entry.absolutePath);
-    if (cached != m_pdfInfoCache.constEnd())
-        return cached.value();
+    if (m_pendingPaths.contains(entry.absolutePath))
+        return;
 
-    PdfInfo info;
-    const PdfDocument document(entry.absolutePath);
-    if (document.isValid() && document.pageCount() > 0) {
-        info.pageCount = document.pageCount();
-        const QImage image = document.renderPage(0, m_thumbnailSize);
-        if (!image.isNull())
-            info.thumbnail = QPixmap::fromImage(image);
-    } else {
-        qWarning() << "Could not read PDF:" << entry.absolutePath;
-        info.failed = true;
+    m_pendingPaths.insert(entry.absolutePath);
+    m_loadQueue.enqueue(entry);
+
+    if (m_activeLoads < kMaxConcurrentLoads)
+        startNextLoad();
+}
+
+void FolderContentModel::startNextLoad() const
+{
+    if (m_loadQueue.isEmpty())
+        return;
+
+    const Entry entry = m_loadQueue.dequeue();
+    const QString path = entry.absolutePath;
+    const int thumbSize = m_thumbnailSize;
+
+    ++m_activeLoads;
+
+    QThread *thread = QThread::create([this, path, thumbSize]() {
+        PdfInfo info;
+        info.loaded = true;
+
+        const PdfDocument document(path);
+        if (document.isValid() && document.pageCount() > 0) {
+            info.pageCount = document.pageCount();
+            const QImage image = document.renderPage(0, thumbSize);
+            if (!image.isNull())
+                info.thumbnail = QPixmap::fromImage(image);
+        } else {
+            qWarning() << "Could not read PDF:" << path;
+            info.failed = true;
+        }
+
+        QMetaObject::invokeMethod(const_cast<FolderContentModel *>(this),
+                                  [this, path, info]() {
+                                      const_cast<FolderContentModel *>(this)->onThumbnailLoaded(path, info);
+                                  },
+                                  Qt::QueuedConnection);
+    });
+    connect(thread, &QThread::finished, thread, &QThread::deleteLater);
+    thread->start();
+}
+
+void FolderContentModel::onThumbnailLoaded(const QString &path, PdfInfo info)
+{
+    --m_activeLoads;
+    m_pendingPaths.remove(path);
+
+    // Find the row for this path — discard if directory changed while loading
+    for (int i = 0; i < m_entries.size(); ++i) {
+        if (m_entries[i].absolutePath == path) {
+            m_pdfInfoCache.insert(path, std::move(info));
+            emit dataChanged(index(i), index(i), {Qt::DecorationRole, MetadataRole});
+            break;
+        }
     }
 
-    return m_pdfInfoCache.insert(entry.absolutePath, info).value();
+    startNextLoad();
 }
 
 QString FolderContentModel::metadataFor(const Entry &entry) const
 {
-    const PdfInfo &info = pdfInfoFor(entry);
+    const auto cached = m_pdfInfoCache.constFind(entry.absolutePath);
+    const int pageCount = (cached != m_pdfInfoCache.constEnd()) ? cached->pageCount : -1;
     const QString pages =
-        info.pageCount >= 0 ? tr("Pages: %1").arg(info.pageCount) : tr("Pages: Unknown");
+        pageCount >= 0 ? tr("Pages: %1").arg(pageCount) : tr("Pages: Unknown");
 
     const QFileInfo fileInfo(entry.absolutePath);
     const QDateTime created = fileInfo.birthTime();

@@ -3,13 +3,15 @@
 #include <QAbstractListModel>
 #include <QHash>
 #include <QPixmap>
+#include <QQueue>
+#include <QSet>
 #include <QString>
 #include <QVector>
 
 // Lists the subfolders and *.pdf files of a single directory (non-recursive).
-// PDF thumbnails and page counts are loaded on demand, the first time a row's
-// Qt::DecorationRole or MetadataRole is actually requested by a view, and
-// cached in memory for the lifetime of this model.
+// PDF thumbnails and page counts are loaded asynchronously in background
+// threads and cached for the lifetime of this model. dataChanged is emitted
+// for each entry as its thumbnail becomes available.
 class FolderContentModel final : public QAbstractListModel
 {
     Q_OBJECT
@@ -42,13 +44,22 @@ private:
         QPixmap thumbnail;
         int pageCount = -1;
         bool failed = false;
+        bool loaded = false;
     };
 
-    const PdfInfo &pdfInfoFor(const Entry &entry) const;
+    void enqueueThumbnailLoad(const Entry &entry) const;
+    void startNextLoad() const;
+    void onThumbnailLoaded(const QString &path, PdfInfo info);
     QString metadataFor(const Entry &entry) const;
 
     QString m_directory;
     QVector<Entry> m_entries;
     int m_thumbnailSize = 96;
+
     mutable QHash<QString, PdfInfo> m_pdfInfoCache;
+    mutable QSet<QString> m_pendingPaths;
+    mutable QQueue<Entry> m_loadQueue;
+    mutable int m_activeLoads = 0;
+
+    static constexpr int kMaxConcurrentLoads = 2;
 };
