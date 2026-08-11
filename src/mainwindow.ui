@@ -44,6 +44,32 @@
        </attribute>
        <layout class="QVBoxLayout" name="explorerTabLayout">
         <item>
+         <layout class="QHBoxLayout" name="locationLayout">
+          <property name="leftMargin">
+           <number>6</number>
+          </property>
+          <property name="topMargin">
+           <number>6</number>
+          </property>
+          <property name="rightMargin">
+           <number>6</number>
+          </property>
+          <item>
+           <widget class="QLabel" name="locationLabel">
+            <property name="text">
+             <string>&amp;Location:</string>
+            </property>
+            <property name="buddy">
+             <cstring>locationEdit</cstring>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QLineEdit" name="locationEdit"/>
+          </item>
+         </layout>
+        </item>
+        <item>
          <widget class="QSplitter" name="mainSplitter">
           <property name="orientation">
            <enum>Qt::Horizontal</enum>
@@ -66,6 +92,15 @@
            </property>
           </widget>
           <widget class="QListView" name="folderContentView">
+           <property name="minimumSize">
+            <size>
+             <width>200</width>
+             <height>0</height>
+            </size>
+           </property>
+           <property name="contextMenuPolicy">
+            <enum>Qt::CustomContextMenu</enum>
+           </property>
            <property name="editTriggers">
             <set>QAbstractItemView::NoEditTriggers</set>
            </property>
@@ -80,6 +115,12 @@
            </property>
            <property name="viewMode">
             <enum>QListView::IconMode</enum>
+           </property>
+           <property name="flow">
+            <enum>QListView::LeftToRight</enum>
+           </property>
+           <property name="wrapping">
+            <bool>true</bool>
            </property>
            <property name="movement">
             <enum>QListView::Static</enum>
@@ -272,6 +313,12 @@
      <string>&amp;File</string>
     </property>
     <addaction name="actionOpenFolder"/>
+    <widget class="QMenu" name="menuRecent">
+     <property name="title">
+      <string>&amp;Recent</string>
+     </property>
+    </widget>
+    <addaction name="menuRecent"/>
     <addaction name="separator"/>
     <addaction name="actionExit"/>
    </widget>

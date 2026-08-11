@@ -2,10 +2,13 @@
 #include "ui_mainwindow.h"
 
 #include "foldercontentmodel.h"
+#include "pdflistitemdelegate.h"
 #include "pdfviewerwidget.h"
 
+#include <QActionGroup>
 #include <QCoreApplication>
 #include <QDateTime>
+#include <QDesktopServices>
 #include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -15,12 +18,15 @@
 #include <QLabel>
 #include <QLayoutItem>
 #include <QLocale>
+#include <QMenu>
 #include <QMessageBox>
 #include <QSlider>
 #include <QStandardPaths>
 #include <QStyle>
+#include <QStyledItemDelegate>
 #include <QTabBar>
 #include <QToolButton>
+#include <QUrl>
 
 namespace {
 constexpr int kInlinePreviewWidth = 220;
@@ -40,15 +46,24 @@ MainWindow::MainWindow(QWidget *parent)
     treeModel->setRootPath(QString());
     treeModel->setFilter(QDir::AllDirs | QDir::NoDotAndDotDot);
     ui->folderTreeView->setModel(treeModel);
+#ifdef Q_OS_WIN
+    // The empty-path index is Windows' "My Computer" node, showing every
+    // drive letter and mapped network drive as top-level items. On
+    // Linux/macOS the same empty-path index just wraps "/" in an extra,
+    // pointless expandable node, so root at "/" directly there instead.
+    ui->folderTreeView->setRootIndex(treeModel->index(treeModel->rootPath()));
+#else
     ui->folderTreeView->setRootIndex(treeModel->index(QDir::rootPath()));
+#endif
     for (int column = 1; column < treeModel->columnCount(); ++column)
         ui->folderTreeView->hideColumn(column);
 
-    contentModel->setThumbnailSize(kDefaultIconSize);
     ui->folderContentView->setModel(contentModel);
+    defaultContentDelegate = new QStyledItemDelegate(ui->folderContentView);
+    detailsContentDelegate = new PdfListItemDelegate(ui->folderContentView);
 
     zoomSlider->setRange(kMinIconSize, kMaxIconSize);
-    zoomSlider->setValue(kDefaultIconSize);
+    zoomSlider->setValue(kDefaultThumbnailSize);
     zoomSlider->setFixedWidth(120);
     zoomSlider->setToolTip(tr("Thumbnail size"));
 
@@ -72,6 +87,9 @@ MainWindow::MainWindow(QWidget *parent)
     // while selectedIndexes() is still empty.
     connect(ui->folderContentView->selectionModel(), &QItemSelectionModel::selectionChanged, this,
             [this](const QItemSelection &, const QItemSelection &) { onContentSelectionChanged(); });
+    connect(ui->folderContentView, &QWidget::customContextMenuRequested, this,
+            &MainWindow::onContentContextMenuRequested);
+    connect(ui->locationEdit, &QLineEdit::returnPressed, this, &MainWindow::onLocationEditReturnPressed);
 
     connect(ui->tabWidget, &QTabWidget::tabCloseRequested, this, &MainWindow::onTabCloseRequested);
 
@@ -84,6 +102,13 @@ MainWindow::MainWindow(QWidget *parent)
     connect(ui->actionResetZoom, &QAction::triggered, this, &MainWindow::resetZoom);
     connect(ui->actionAbout, &QAction::triggered, this, &MainWindow::showAboutDialog);
     connect(zoomSlider, &QSlider::valueChanged, this, &MainWindow::onZoomSliderChanged);
+
+    setupViewModeMenu();
+    applyContentViewMode(appSettings.contentViewMode());
+
+    recentFiles = appSettings.recentFiles();
+    connect(ui->menuRecent, &QMenu::aboutToShow, this, &MainWindow::rebuildRecentFilesMenu);
+    rebuildRecentFilesMenu();
 
     clearDetailsPanel();
     setCurrentFolder(QStandardPaths::writableLocation(QStandardPaths::HomeLocation));
@@ -150,6 +175,47 @@ void MainWindow::onContentSelectionChanged()
     updateDetailsPanel(contentModel->data(index, FolderContentModel::FilePathRole).toString());
 }
 
+void MainWindow::onContentContextMenuRequested(const QPoint &pos)
+{
+    const QModelIndex index = ui->folderContentView->indexAt(pos);
+    if (!index.isValid())
+        return;
+
+    const QString path = contentModel->data(index, FolderContentModel::FilePathRole).toString();
+    const bool isDir = contentModel->data(index, FolderContentModel::IsDirRole).toBool();
+
+    QMenu menu(this);
+    QAction *openAction = menu.addAction(tr("Open"));
+    QAction *openWithAction = isDir ? nullptr : menu.addAction(tr("Open with system default"));
+
+    QAction *chosen = menu.exec(ui->folderContentView->viewport()->mapToGlobal(pos));
+    if (chosen == openAction) {
+        if (isDir)
+            setCurrentFolder(path);
+        else
+            openPdfViewerTab(path);
+    } else if (chosen && chosen == openWithAction) {
+        openWithSystemDefault(path);
+    }
+}
+
+void MainWindow::onLocationEditReturnPressed()
+{
+    QString path = ui->locationEdit->text().trimmed();
+    if (path.startsWith(QLatin1Char('~')))
+        path.replace(0, 1, QDir::homePath());
+
+    const QFileInfo info(path);
+    if (!info.exists() || !info.isDir() || !info.isReadable()) {
+        ui->locationEdit->setText(currentFolderPath);
+        ui->statusbar->showMessage(
+            tr("Can't open \"%1\": it doesn't exist or isn't accessible.").arg(path), 4000);
+        return;
+    }
+
+    setCurrentFolder(info.absoluteFilePath());
+}
+
 void MainWindow::onZoomSliderChanged(int value)
 {
     ui->folderContentView->setIconSize(QSize(value, value));
@@ -168,7 +234,89 @@ void MainWindow::zoomOut()
 
 void MainWindow::resetZoom()
 {
-    zoomSlider->setValue(kDefaultIconSize);
+    zoomSlider->setValue(kDefaultThumbnailSize);
+}
+
+void MainWindow::setupViewModeMenu()
+{
+    auto *viewModeButton = new QToolButton(this);
+    viewModeButton->setObjectName(QStringLiteral("viewModeButton"));
+    viewModeButton->setText(tr("View"));
+    viewModeButton->setPopupMode(QToolButton::InstantPopup);
+    viewModeButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
+
+    auto *viewModeMenu = new QMenu(viewModeButton);
+    viewModeActionGroup = new QActionGroup(this);
+    viewModeActionGroup->setExclusive(true);
+
+    const QList<QPair<AppSettings::ContentViewMode, QString>> modes = {
+        {AppSettings::ContentViewMode::Thumbnails, tr("Thumbnails")},
+        {AppSettings::ContentViewMode::Details, tr("Details")},
+        {AppSettings::ContentViewMode::CompactList, tr("Compact List")},
+    };
+
+    for (const auto &[mode, label] : modes) {
+        QAction *action = viewModeMenu->addAction(label);
+        action->setCheckable(true);
+        action->setData(static_cast<int>(mode));
+        viewModeActionGroup->addAction(action);
+        connect(action, &QAction::triggered, this, [this, mode]() { applyContentViewMode(mode); });
+    }
+
+    viewModeButton->setMenu(viewModeMenu);
+    ui->mainToolBar->addWidget(viewModeButton);
+
+    // Mirror the same actions (shared QAction state) into the existing View
+    // menu in the menu bar, alongside the zoom actions, for discoverability.
+    ui->menuView->insertActions(ui->actionZoomIn, viewModeActionGroup->actions());
+    ui->menuView->insertSeparator(ui->actionZoomIn);
+}
+
+void MainWindow::applyContentViewMode(AppSettings::ContentViewMode mode)
+{
+    switch (mode) {
+    case AppSettings::ContentViewMode::Thumbnails:
+        ui->folderContentView->setItemDelegate(defaultContentDelegate);
+        ui->folderContentView->setViewMode(QListView::IconMode);
+        ui->folderContentView->setFlow(QListView::LeftToRight);
+        ui->folderContentView->setWrapping(true);
+        ui->folderContentView->setWordWrap(true);
+        ui->folderContentView->setUniformItemSizes(false);
+        ui->folderContentView->setSpacing(12);
+        ui->folderContentView->setIconSize(QSize(zoomSlider->value(), zoomSlider->value()));
+        contentModel->setThumbnailSize(zoomSlider->value());
+        zoomSlider->setEnabled(true);
+        break;
+    case AppSettings::ContentViewMode::Details:
+        ui->folderContentView->setItemDelegate(detailsContentDelegate);
+        ui->folderContentView->setViewMode(QListView::ListMode);
+        ui->folderContentView->setFlow(QListView::TopToBottom);
+        ui->folderContentView->setWrapping(false);
+        ui->folderContentView->setSpacing(2);
+        ui->folderContentView->setIconSize(QSize(kDetailsIconSize, kDetailsIconSize));
+        contentModel->setThumbnailSize(kDetailsIconSize);
+        zoomSlider->setEnabled(false);
+        break;
+    case AppSettings::ContentViewMode::CompactList:
+        ui->folderContentView->setItemDelegate(defaultContentDelegate);
+        ui->folderContentView->setViewMode(QListView::ListMode);
+        ui->folderContentView->setFlow(QListView::TopToBottom);
+        ui->folderContentView->setWrapping(false);
+        ui->folderContentView->setSpacing(0);
+        ui->folderContentView->setIconSize(QSize(kCompactIconSize, kCompactIconSize));
+        contentModel->setThumbnailSize(kCompactIconSize);
+        zoomSlider->setEnabled(false);
+        break;
+    }
+
+    for (QAction *action : viewModeActionGroup->actions()) {
+        if (action->data().toInt() == static_cast<int>(mode)) {
+            action->setChecked(true);
+            break;
+        }
+    }
+
+    appSettings.setContentViewMode(mode);
 }
 
 void MainWindow::showAboutDialog()
@@ -194,6 +342,7 @@ void MainWindow::setCurrentFolder(const QString &path)
         return;
 
     currentFolderPath = path;
+    ui->locationEdit->setText(path);
 
     const QModelIndex treeIndex = treeModel->index(path);
     ui->folderTreeView->setCurrentIndex(treeIndex);
@@ -235,25 +384,31 @@ void MainWindow::updateDetailsPanel(const QString &filePath)
     auto *viewer = new PdfViewerWidget(filePath, kInlinePreviewWidth, ui->previewContainer);
     ui->previewContainerLayout->addWidget(viewer);
 
-    ui->pagesValueLabel->setText(viewer->isValid() ? tr("Pages: %1").arg(viewer->pageCount())
-                                                    : tr("Pages: Unknown"));
+    // The viewer opens and lays out the document on a worker thread so a
+    // large/complex file never blocks the UI; these labels show a loading
+    // placeholder until PdfViewerWidget::documentLoaded fires.
+    ui->pagesValueLabel->setText(tr("Pages: %1").arg(tr("Loading…")));
+    ui->previewPageLabel->setText(tr("Page — / —"));
+    ui->previewPrevPageButton->setEnabled(false);
+    ui->previewNextPageButton->setEnabled(false);
 
-    const bool canPage = viewer->isValid() && viewer->pageCount() > 1;
-    ui->previewPrevPageButton->setEnabled(canPage);
-    ui->previewNextPageButton->setEnabled(canPage);
+    connect(viewer, &PdfViewerWidget::documentLoaded, this, [this, viewer](bool valid, int pageCount) {
+        ui->pagesValueLabel->setText(valid ? tr("Pages: %1").arg(pageCount) : tr("Pages: Unknown"));
 
-    if (viewer->isValid()) {
-        ui->previewPageLabel->setText(tr("Page %1 / %2").arg(1).arg(viewer->pageCount()));
-        connect(viewer, &PdfViewerWidget::currentPageChanged, this, [this, viewer](int pageIndex) {
-            ui->previewPageLabel->setText(tr("Page %1 / %2").arg(pageIndex + 1).arg(viewer->pageCount()));
-        });
-        connect(ui->previewPrevPageButton, &QToolButton::clicked, viewer,
-                [viewer]() { viewer->goToPage(viewer->currentPageIndex() - 1); });
-        connect(ui->previewNextPageButton, &QToolButton::clicked, viewer,
-                [viewer]() { viewer->goToPage(viewer->currentPageIndex() + 1); });
-    } else {
-        ui->previewPageLabel->setText(tr("Page — / —"));
-    }
+        const bool canPage = valid && pageCount > 1;
+        ui->previewPrevPageButton->setEnabled(canPage);
+        ui->previewNextPageButton->setEnabled(canPage);
+
+        if (valid)
+            ui->previewPageLabel->setText(tr("Page %1 / %2").arg(1).arg(pageCount));
+    });
+    connect(viewer, &PdfViewerWidget::currentPageChanged, this, [this, viewer](int pageIndex) {
+        ui->previewPageLabel->setText(tr("Page %1 / %2").arg(pageIndex + 1).arg(viewer->pageCount()));
+    });
+    connect(ui->previewPrevPageButton, &QToolButton::clicked, viewer,
+            [viewer]() { viewer->goToPage(viewer->currentPageIndex() - 1); });
+    connect(ui->previewNextPageButton, &QToolButton::clicked, viewer,
+            [viewer]() { viewer->goToPage(viewer->currentPageIndex() + 1); });
 }
 
 void MainWindow::clearDetailsPanel()
@@ -283,6 +438,8 @@ void MainWindow::clearDetailsPanel()
 
 void MainWindow::openPdfViewerTab(const QString &filePath)
 {
+    addRecentFile(filePath);
+
     for (int i = 0; i < ui->tabWidget->count(); ++i) {
         if (ui->tabWidget->widget(i)->property("filePath").toString() == filePath) {
             ui->tabWidget->setCurrentIndex(i);
@@ -295,4 +452,49 @@ void MainWindow::openPdfViewerTab(const QString &filePath)
 
     const int index = ui->tabWidget->addTab(viewer, QFileInfo(filePath).fileName());
     ui->tabWidget->setCurrentIndex(index);
+}
+
+void MainWindow::openWithSystemDefault(const QString &filePath)
+{
+    QDesktopServices::openUrl(QUrl::fromLocalFile(filePath));
+}
+
+void MainWindow::addRecentFile(const QString &filePath)
+{
+    recentFiles.removeAll(filePath);
+    recentFiles.prepend(filePath);
+    while (recentFiles.size() > kMaxRecentFiles)
+        recentFiles.removeLast();
+
+    appSettings.setRecentFiles(recentFiles);
+    // Rebuilt lazily on menuRecent::aboutToShow instead of here: this can run
+    // while a QAction from this very menu is still mid-triggered() (opening
+    // a file from Recent calls back into here), and deleting that action's
+    // menu out from under it via clear() in the same call stack is unsafe.
+}
+
+void MainWindow::rebuildRecentFilesMenu()
+{
+    ui->menuRecent->clear();
+
+    QStringList stillValid;
+    for (const QString &path : std::as_const(recentFiles)) {
+        if (!QFileInfo::exists(path))
+            continue;
+        stillValid.append(path);
+
+        QAction *action = ui->menuRecent->addAction(QFileInfo(path).fileName());
+        action->setToolTip(path);
+        connect(action, &QAction::triggered, this, [this, path]() { openPdfViewerTab(path); });
+    }
+
+    if (stillValid.size() != recentFiles.size()) {
+        recentFiles = stillValid;
+        appSettings.setRecentFiles(recentFiles);
+    }
+
+    if (stillValid.isEmpty()) {
+        QAction *emptyAction = ui->menuRecent->addAction(tr("(No recent files)"));
+        emptyAction->setEnabled(false);
+    }
 }

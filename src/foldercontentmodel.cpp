@@ -2,10 +2,12 @@
 
 #include "pdfdocument.h"
 
+#include <QDateTime>
 #include <QDir>
 #include <QFileIconProvider>
 #include <QFileInfo>
 #include <QIcon>
+#include <QLocale>
 
 FolderContentModel::FolderContentModel(QObject *parent)
     : QAbstractListModel(parent)
@@ -43,8 +45,7 @@ void FolderContentModel::setThumbnailSize(int size)
         return;
 
     m_thumbnailSize = size;
-    m_thumbnailCache.clear();
-    m_failedThumbnails.clear();
+    m_pdfInfoCache.clear();
 
     if (!m_entries.isEmpty())
         emit dataChanged(index(0), index(m_entries.size() - 1), {Qt::DecorationRole});
@@ -67,12 +68,13 @@ QVariant FolderContentModel::data(const QModelIndex &index, int role) const
 
     switch (role) {
     case Qt::DisplayRole:
+    case Qt::ToolTipRole:
         return entry.fileName;
     case Qt::DecorationRole: {
         if (!entry.isDir) {
-            const QPixmap thumbnail = thumbnailFor(entry);
-            if (!thumbnail.isNull())
-                return QIcon(thumbnail);
+            const PdfInfo &info = pdfInfoFor(entry);
+            if (!info.thumbnail.isNull())
+                return QIcon(info.thumbnail);
         }
         static QFileIconProvider iconProvider;
         return iconProvider.icon(QFileInfo(entry.absolutePath));
@@ -81,33 +83,46 @@ QVariant FolderContentModel::data(const QModelIndex &index, int role) const
         return entry.absolutePath;
     case IsDirRole:
         return entry.isDir;
+    case MetadataRole:
+        return entry.isDir ? QVariant() : QVariant(metadataFor(entry));
     default:
         return {};
     }
 }
 
-QPixmap FolderContentModel::thumbnailFor(const Entry &entry) const
+const FolderContentModel::PdfInfo &FolderContentModel::pdfInfoFor(const Entry &entry) const
 {
-    const auto cached = m_thumbnailCache.constFind(entry.absolutePath);
-    if (cached != m_thumbnailCache.constEnd())
+    const auto cached = m_pdfInfoCache.constFind(entry.absolutePath);
+    if (cached != m_pdfInfoCache.constEnd())
         return cached.value();
 
-    if (m_failedThumbnails.contains(entry.absolutePath))
-        return {};
-
+    PdfInfo info;
     const PdfDocument document(entry.absolutePath);
-    if (!document.isValid() || document.pageCount() <= 0) {
-        m_failedThumbnails.insert(entry.absolutePath);
-        return {};
+    if (document.isValid() && document.pageCount() > 0) {
+        info.pageCount = document.pageCount();
+        const QImage image = document.renderPage(0, m_thumbnailSize);
+        if (!image.isNull())
+            info.thumbnail = QPixmap::fromImage(image);
+    } else {
+        info.failed = true;
     }
 
-    const QImage image = document.renderPage(0, m_thumbnailSize);
-    if (image.isNull()) {
-        m_failedThumbnails.insert(entry.absolutePath);
-        return {};
-    }
+    return m_pdfInfoCache.insert(entry.absolutePath, info).value();
+}
 
-    const QPixmap pixmap = QPixmap::fromImage(image);
-    m_thumbnailCache.insert(entry.absolutePath, pixmap);
-    return pixmap;
+QString FolderContentModel::metadataFor(const Entry &entry) const
+{
+    const PdfInfo &info = pdfInfoFor(entry);
+    const QString pages =
+        info.pageCount >= 0 ? tr("Pages: %1").arg(info.pageCount) : tr("Pages: Unknown");
+
+    const QFileInfo fileInfo(entry.absolutePath);
+    const QDateTime created = fileInfo.birthTime();
+    const QString createdText =
+        tr("Created: %1")
+            .arg(created.isValid() ? QLocale().toString(created, QLocale::ShortFormat) : tr("Unknown"));
+    const QString modifiedText =
+        tr("Modified: %1").arg(QLocale().toString(fileInfo.lastModified(), QLocale::ShortFormat));
+
+    return QStringLiteral("%1    %2    %3").arg(pages, createdText, modifiedText);
 }

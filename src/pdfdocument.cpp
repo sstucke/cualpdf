@@ -3,13 +3,28 @@
 #include <fpdfview.h>
 
 #include <QByteArray>
+#include <QMutex>
+#include <QMutexLocker>
 
 namespace {
 bool g_libraryInitialized = false;
+
+// PDFium is not safe to call concurrently from multiple threads. Callers
+// (FolderContentModel on the GUI thread, PdfViewerWidget's worker threads)
+// may legitimately overlap, so every FPDF_* call in this file is serialized
+// through this single global lock rather than assuming a single-thread
+// caller. This does not make loading/rendering parallel — only safe to call
+// from a background thread instead of blocking the GUI thread.
+QMutex &pdfiumMutex()
+{
+    static QMutex mutex;
+    return mutex;
+}
 }
 
 void PdfDocument::initializeLibrary()
 {
+    const QMutexLocker locker(&pdfiumMutex());
     if (g_libraryInitialized)
         return;
 
@@ -24,6 +39,7 @@ void PdfDocument::initializeLibrary()
 
 void PdfDocument::shutdownLibrary()
 {
+    const QMutexLocker locker(&pdfiumMutex());
     if (!g_libraryInitialized)
         return;
 
@@ -34,11 +50,13 @@ void PdfDocument::shutdownLibrary()
 PdfDocument::PdfDocument(const QString &filePath)
 {
     const QByteArray path = filePath.toUtf8();
+    const QMutexLocker locker(&pdfiumMutex());
     m_document = FPDF_LoadDocument(path.constData(), nullptr);
 }
 
 PdfDocument::~PdfDocument()
 {
+    const QMutexLocker locker(&pdfiumMutex());
     if (m_document)
         FPDF_CloseDocument(static_cast<FPDF_DOCUMENT>(m_document));
 }
@@ -48,6 +66,7 @@ int PdfDocument::pageCount() const
     if (!m_document)
         return 0;
 
+    const QMutexLocker locker(&pdfiumMutex());
     return FPDF_GetPageCount(static_cast<FPDF_DOCUMENT>(m_document));
 }
 
@@ -56,6 +75,7 @@ QSizeF PdfDocument::pageSizePoints(int pageIndex) const
     if (!m_document)
         return {};
 
+    const QMutexLocker locker(&pdfiumMutex());
     FS_SIZEF size;
     if (!FPDF_GetPageSizeByIndexF(static_cast<FPDF_DOCUMENT>(m_document), pageIndex, &size))
         return {};
@@ -68,6 +88,7 @@ QImage PdfDocument::renderPage(int pageIndex, int targetWidthPx) const
     if (!m_document || targetWidthPx <= 0)
         return {};
 
+    const QMutexLocker locker(&pdfiumMutex());
     const auto document = static_cast<FPDF_DOCUMENT>(m_document);
     const FPDF_PAGE page = FPDF_LoadPage(document, pageIndex);
     if (!page)

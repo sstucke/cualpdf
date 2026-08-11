@@ -61,6 +61,10 @@ qt_add_executable(cualpdf
     src/foldercontentmodel.h
     src/pdfviewerwidget.cpp
     src/pdfviewerwidget.h
+    src/pdflistitemdelegate.cpp
+    src/pdflistitemdelegate.h
+    src/appsettings.cpp
+    src/appsettings.h
 )
 
 target_link_libraries(cualpdf PRIVATE Qt6::Widgets pdfium)

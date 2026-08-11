@@ -7,6 +7,7 @@
 #include <QResizeEvent>
 #include <QScrollArea>
 #include <QScrollBar>
+#include <QThread>
 #include <QTimer>
 #include <QVBoxLayout>
 
@@ -18,7 +19,6 @@ PdfViewerWidget::PdfViewerWidget(const QString &filePath, int pageRenderWidth, Q
     : QWidget(parent)
     , m_filePath(filePath)
     , m_pageRenderWidth(pageRenderWidth)
-    , m_document(std::make_unique<PdfDocument>(filePath))
     , m_scrollArea(new QScrollArea(this))
     , m_pagesContainer(new QWidget)
 {
@@ -29,38 +29,81 @@ PdfViewerWidget::PdfViewerWidget(const QString &filePath, int pageRenderWidth, Q
     m_scrollArea->setWidgetResizable(true);
     m_scrollArea->setWidget(m_pagesContainer);
 
-    if (m_document->isValid() && m_document->pageCount() > 0) {
-        buildPageLabels();
-        connect(m_scrollArea->verticalScrollBar(), &QScrollBar::valueChanged, this,
-                &PdfViewerWidget::renderVisiblePages);
-        QTimer::singleShot(0, this, &PdfViewerWidget::renderVisiblePages);
-    } else {
-        auto *layout = new QVBoxLayout(m_pagesContainer);
-        auto *errorLabel = new QLabel(tr("Could not open this PDF file."), m_pagesContainer);
-        errorLabel->setAlignment(Qt::AlignCenter);
-        layout->addWidget(errorLabel);
-    }
+    auto *containerLayout = new QVBoxLayout(m_pagesContainer);
+    m_loadingLabel = new QLabel(tr("Loading…"), m_pagesContainer);
+    m_loadingLabel->setAlignment(Qt::AlignCenter);
+    containerLayout->addWidget(m_loadingLabel);
+
+    startLoading();
 }
 
 PdfViewerWidget::~PdfViewerWidget() = default;
 
-bool PdfViewerWidget::isValid() const
+void PdfViewerWidget::startLoading()
 {
-    return m_document && m_document->isValid();
+    const QString path = m_filePath;
+
+    // The worker owns its own PdfDocument handle; only the (thread-safe,
+    // ref-counted) result crosses back to the GUI thread, so the file is
+    // never opened twice. QMetaObject::invokeMethod with `this` as context
+    // safely no-ops if the widget is destroyed before the load finishes.
+    QThread *thread = QThread::create([this, path]() {
+        auto document = std::make_shared<PdfDocument>(path);
+        const bool valid = document->isValid() && document->pageCount() > 0;
+
+        QVector<QSizeF> pageSizes;
+        if (valid) {
+            const int count = document->pageCount();
+            pageSizes.reserve(count);
+            for (int i = 0; i < count; ++i)
+                pageSizes.append(document->pageSizePoints(i));
+        }
+
+        QMetaObject::invokeMethod(
+            this, [this, valid, document, pageSizes]() { onDocumentLoaded(valid, document, pageSizes); },
+            Qt::QueuedConnection);
+    });
+    connect(thread, &QThread::finished, thread, &QThread::deleteLater);
+    thread->start();
 }
 
-void PdfViewerWidget::buildPageLabels()
+void PdfViewerWidget::onDocumentLoaded(bool valid, const std::shared_ptr<PdfDocument> &document,
+                                        const QVector<QSizeF> &pageSizes)
 {
-    auto *layout = new QVBoxLayout(m_pagesContainer);
+    delete m_loadingLabel;
+    m_loadingLabel = nullptr;
+
+    m_valid = valid;
+    m_document = document;
+
+    if (!valid) {
+        auto *errorLabel = new QLabel(tr("Could not open this PDF file."), m_pagesContainer);
+        errorLabel->setAlignment(Qt::AlignCenter);
+        m_pagesContainer->layout()->addWidget(errorLabel);
+        emit documentLoaded(false, 0);
+        return;
+    }
+
+    buildPageLabels(pageSizes);
+    connect(m_scrollArea->verticalScrollBar(), &QScrollBar::valueChanged, this,
+            &PdfViewerWidget::renderVisiblePages);
+    QTimer::singleShot(0, this, &PdfViewerWidget::renderVisiblePages);
+
+    emit documentLoaded(true, m_pageLabels.size());
+}
+
+void PdfViewerWidget::buildPageLabels(const QVector<QSizeF> &pageSizes)
+{
+    auto *layout = qobject_cast<QVBoxLayout *>(m_pagesContainer->layout());
     layout->setSpacing(kPageSpacing);
     layout->setContentsMargins(kPageSpacing, kPageSpacing, kPageSpacing, kPageSpacing);
 
-    const int pageCount = m_document->pageCount();
+    const int pageCount = pageSizes.size();
     m_pageLabels.reserve(pageCount);
     m_pageRendered.resize(pageCount);
 
     for (int i = 0; i < pageCount; ++i) {
-        const QSizeF sizePt = m_document->pageSizePoints(i);
+        const QSizeF sizePt = pageSizes.at(i);
 
         int width = m_pageRenderWidth;
         int height = width;
@@ -96,7 +139,7 @@ void PdfViewerWidget::goToPage(int pageIndex)
 
 void PdfViewerWidget::renderVisiblePages()
 {
-    if (!m_document || !m_document->isValid() || m_pageLabels.isEmpty())
+    if (!m_valid || m_pageLabels.isEmpty())
         return;
 
     const QRect viewportRect = m_scrollArea->viewport()->rect();
@@ -118,16 +161,40 @@ void PdfViewerWidget::renderVisiblePages()
             foundVisible = true;
         }
 
-        if (!m_pageRendered[i] && labelRect.intersects(expanded)) {
-            const QImage image = m_document->renderPage(i, label->width());
-            if (!image.isNull())
-                label->setPixmap(QPixmap::fromImage(image));
-            m_pageRendered[i] = true;
-        }
+        if (!m_pageRendered[i] && labelRect.intersects(expanded))
+            scheduleRender(i, label->width());
     }
 
     if (visiblePage != m_currentPageIndex) {
         m_currentPageIndex = visiblePage;
         emit currentPageChanged(m_currentPageIndex);
     }
+}
+
+void PdfViewerWidget::scheduleRender(int pageIndex, int widthPx)
+{
+    if (m_pagesLoading.contains(pageIndex))
+        return;
+    m_pagesLoading.insert(pageIndex);
+
+    const std::shared_ptr<PdfDocument> document = m_document;
+    QThread *thread = QThread::create([this, document, pageIndex, widthPx]() {
+        const QImage image = document->renderPage(pageIndex, widthPx);
+        QMetaObject::invokeMethod(
+            this, [this, pageIndex, image]() { onPageRendered(pageIndex, image); }, Qt::QueuedConnection);
+    });
+    connect(thread, &QThread::finished, thread, &QThread::deleteLater);
+    thread->start();
+}
+
+void PdfViewerWidget::onPageRendered(int pageIndex, const QImage &image)
+{
+    m_pagesLoading.remove(pageIndex);
+
+    if (pageIndex < 0 || pageIndex >= m_pageLabels.size())
+        return;
+
+    if (!image.isNull())
+        m_pageLabels[pageIndex]->setPixmap(QPixmap::fromImage(image));
+    m_pageRendered[pageIndex] = true;
 }

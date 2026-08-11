@@ -8,6 +8,7 @@
 int main(int argc, char *argv[])
 {
     QApplication application(argc, argv);
+    QApplication::setOrganizationName("cualpdf");
     QApplication::setApplicationName("cualpdf");
     QApplication::setApplicationVersion("0.1.0");
 
