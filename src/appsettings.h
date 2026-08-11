@@ -24,6 +24,9 @@ public:
     QStringList recentFiles() const;
     void setRecentFiles(const QStringList &files);
 
+    QStringList favoriteFolders() const;
+    void setFavoriteFolders(const QStringList &folders);
+
 private:
     QSettings m_settings;
 };

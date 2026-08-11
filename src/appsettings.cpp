@@ -3,6 +3,7 @@
 namespace {
 constexpr auto kContentViewModeKey = "contentViewMode";
 constexpr auto kRecentFilesKey = "recentFiles";
+constexpr auto kFavoriteFoldersKey = "favoriteFolders";
 constexpr auto kDefaultContentViewMode = static_cast<int>(AppSettings::ContentViewMode::Thumbnails);
 }
 
@@ -30,4 +31,14 @@ QStringList AppSettings::recentFiles() const
 void AppSettings::setRecentFiles(const QStringList &files)
 {
     m_settings.setValue(kRecentFilesKey, files);
+}
+
+QStringList AppSettings::favoriteFolders() const
+{
+    return m_settings.value(kFavoriteFoldersKey).toStringList();
+}
+
+void AppSettings::setFavoriteFolders(const QStringList &folders)
+{
+    m_settings.setValue(kFavoriteFoldersKey, folders);
 }

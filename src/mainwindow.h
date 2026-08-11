@@ -10,6 +10,7 @@ QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
 class QFileSystemModel;
 class QLabel;
+class QListWidgetItem;
 class QSlider;
 class QModelIndex;
 class QPoint;
@@ -42,8 +43,14 @@ private:
     void resetZoom();
     void showAboutDialog();
     void onTabCloseRequested(int index);
+    void onTreeContextMenuRequested(const QPoint &pos);
+    void onFavoritesContextMenuRequested(const QPoint &pos);
+    void onFavoriteItemActivated(QListWidgetItem *item);
 
     void setCurrentFolder(const QString &path);
+    void addFavorite(const QString &path);
+    void removeFavorite(const QString &path);
+    void rebuildFavoritesList();
     void updateStatusBarItemCount();
     void updateDetailsPanel(const QString &filePath);
     void clearDetailsPanel();
@@ -65,6 +72,7 @@ private:
     AppSettings appSettings;
     QString currentFolderPath;
     QStringList recentFiles;
+    QStringList m_favorites;
 
     static constexpr int kDefaultThumbnailSize = 96;
     static constexpr int kMinIconSize = 32;

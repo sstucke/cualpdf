@@ -259,6 +259,18 @@ Un editor de PDF rápido, liviano y de código abierto.</translation>
         <source>(No recent files)</source>
         <translation>(Sin archivos recientes)</translation>
     </message>
+    <message>
+        <source>★  Favorites</source>
+        <translation>★  Favoritos</translation>
+    </message>
+    <message>
+        <source>Pin to Favorites</source>
+        <translation>Anclar a Favoritos</translation>
+    </message>
+    <message>
+        <source>Unpin from Favorites</source>
+        <translation>Desanclar de Favoritos</translation>
+    </message>
 </context>
 <context>
     <name>PdfViewerWidget</name>

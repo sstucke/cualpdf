@@ -11,12 +11,14 @@
 #include <QDesktopServices>
 #include <QDir>
 #include <QFileDialog>
+#include <QFileIconProvider>
 #include <QFileInfo>
 #include <QFileSystemModel>
 #include <QFrame>
 #include <QItemSelection>
 #include <QLabel>
 #include <QLayoutItem>
+#include <QListWidget>
 #include <QLocale>
 #include <QMenu>
 #include <QMessageBox>
@@ -80,6 +82,12 @@ MainWindow::MainWindow(QWidget *parent)
 
     connect(ui->folderTreeView->selectionModel(), &QItemSelectionModel::currentChanged, this,
             [this](const QModelIndex &current, const QModelIndex &) { onTreeCurrentChanged(current); });
+    connect(ui->folderTreeView, &QWidget::customContextMenuRequested,
+            this, &MainWindow::onTreeContextMenuRequested);
+    connect(ui->favoritesListWidget, &QWidget::customContextMenuRequested,
+            this, &MainWindow::onFavoritesContextMenuRequested);
+    connect(ui->favoritesListWidget, &QListWidget::itemClicked,
+            this, &MainWindow::onFavoriteItemActivated);
     connect(ui->folderContentView, &QAbstractItemView::activated, this, &MainWindow::onContentActivated);
     // selectionChanged (not currentChanged) is what actually reflects
     // selectedIndexes(): a mouse click updates the current index on press but
@@ -109,6 +117,9 @@ MainWindow::MainWindow(QWidget *parent)
     recentFiles = appSettings.recentFiles();
     connect(ui->menuRecent, &QMenu::aboutToShow, this, &MainWindow::rebuildRecentFilesMenu);
     rebuildRecentFilesMenu();
+
+    m_favorites = appSettings.favoriteFolders();
+    rebuildFavoritesList();
 
     clearDetailsPanel();
     setCurrentFolder(QStandardPaths::writableLocation(QStandardPaths::HomeLocation));
@@ -481,6 +492,92 @@ void MainWindow::addRecentFile(const QString &filePath)
     // while a QAction from this very menu is still mid-triggered() (opening
     // a file from Recent calls back into here), and deleting that action's
     // menu out from under it via clear() in the same call stack is unsafe.
+}
+
+void MainWindow::onTreeContextMenuRequested(const QPoint &pos)
+{
+    const QModelIndex index = ui->folderTreeView->indexAt(pos);
+    if (!index.isValid())
+        return;
+
+    const QString path = treeModel->filePath(index);
+    if (!QFileInfo(path).isDir())
+        return;
+
+    const bool alreadyFavorite = m_favorites.contains(path);
+
+    QMenu menu(this);
+    QAction *action = menu.addAction(alreadyFavorite ? tr("Unpin from Favorites") : tr("Pin to Favorites"));
+    if (menu.exec(ui->folderTreeView->viewport()->mapToGlobal(pos)) == action) {
+        if (alreadyFavorite)
+            removeFavorite(path);
+        else
+            addFavorite(path);
+    }
+}
+
+void MainWindow::onFavoritesContextMenuRequested(const QPoint &pos)
+{
+    QListWidgetItem *item = ui->favoritesListWidget->itemAt(pos);
+    if (!item)
+        return;
+
+    const QString path = item->data(Qt::UserRole).toString();
+    QMenu menu(this);
+    QAction *action = menu.addAction(tr("Unpin from Favorites"));
+    if (menu.exec(ui->favoritesListWidget->viewport()->mapToGlobal(pos)) == action)
+        removeFavorite(path);
+}
+
+void MainWindow::onFavoriteItemActivated(QListWidgetItem *item)
+{
+    if (item)
+        setCurrentFolder(item->data(Qt::UserRole).toString());
+}
+
+void MainWindow::addFavorite(const QString &path)
+{
+    if (m_favorites.contains(path))
+        return;
+    m_favorites.append(path);
+    appSettings.setFavoriteFolders(m_favorites);
+    rebuildFavoritesList();
+}
+
+void MainWindow::removeFavorite(const QString &path)
+{
+    if (!m_favorites.removeAll(path))
+        return;
+    appSettings.setFavoriteFolders(m_favorites);
+    rebuildFavoritesList();
+}
+
+void MainWindow::rebuildFavoritesList()
+{
+    ui->favoritesListWidget->clear();
+
+    static QFileIconProvider iconProvider;
+    for (const QString &path : std::as_const(m_favorites)) {
+        if (!QFileInfo::exists(path))
+            continue;
+        auto *item = new QListWidgetItem(
+            iconProvider.icon(QFileInfo(path)),
+            QFileInfo(path).fileName(),
+            ui->favoritesListWidget);
+        item->setData(Qt::UserRole, path);
+        item->setToolTip(path);
+    }
+
+    // Hide the favorites section entirely when empty; size to content when shown
+    const int count = ui->favoritesListWidget->count();
+    const bool hasItems = count > 0;
+    if (hasItems) {
+        const int rowH = ui->favoritesListWidget->fontMetrics().height() + 10;
+        ui->favoritesListWidget->setFixedHeight(rowH * count);
+    }
+    ui->favoritesHeaderLabel->setVisible(hasItems);
+    ui->favoritesListWidget->setVisible(hasItems);
+    ui->favoritesSeparator->setVisible(hasItems);
 }
 
 void MainWindow::rebuildRecentFilesMenu()
