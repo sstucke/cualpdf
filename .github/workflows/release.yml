@@ -1,0 +1,110 @@
+name: Build cualpdf
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux
+          - os: windows-latest
+            name: windows
+          - os: macos-latest
+            name: macos
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Instalar Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.8.*"
+          cache: true
+
+      - name: Configurar
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Compilar
+        run: cmake --build build --config Release --parallel
+
+      - name: Instalar en install_output
+        run: cmake --install build --config Release --prefix install_output
+
+      - name: Empaquetar (Linux)
+        if: matrix.name == 'linux'
+        shell: bash
+        run: |
+          mkdir -p dist
+          tar -C install_output -czf dist/cualpdf-linux-x64.tar.gz .
+
+      - name: Empaquetar (Windows)
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: |
+          windeployqt install_output\bin\cualpdf.exe
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Compress-Archive -Path install_output\bin\* -DestinationPath dist\cualpdf-windows-x64.zip
+
+      - name: Empaquetar (macOS)
+        if: matrix.name == 'macos'
+        shell: bash
+        run: |
+          macdeployqt install_output/cualpdf.app
+
+          APP="install_output/cualpdf.app"
+          FRAMEWORKS="$APP/Contents/Frameworks"
+          EXE="$APP/Contents/MacOS/cualpdf"
+
+          # libpdfium.dylib is not a Qt framework, so macdeployqt does not
+          # bundle it. Copy it in and repoint the executable's load command
+          # at @rpath (macdeployqt already adds Contents/Frameworks to the
+          # executable's rpath search list).
+          mkdir -p "$FRAMEWORKS"
+          PDFIUM_DYLIB=$(find build/_deps/pdfium-src/lib -name "libpdfium.dylib")
+          cp "$PDFIUM_DYLIB" "$FRAMEWORKS/libpdfium.dylib"
+
+          CURRENT_ID=$(otool -L "$EXE" | awk '/libpdfium/ {print $1}')
+          if [ -n "$CURRENT_ID" ]; then
+            install_name_tool -change "$CURRENT_ID" "@rpath/libpdfium.dylib" "$EXE"
+          fi
+          install_name_tool -add_rpath "@executable_path/../Frameworks" "$EXE" || true
+
+          # Re-sign after modifying the bundle; Apple Silicon refuses to run
+          # unsigned/altered binaries even with an ad-hoc signature missing.
+          codesign --force --deep --sign - "$APP"
+
+          mkdir -p dist
+          ditto -c -k --sequesterRsrc --keepParent "$APP" "dist/cualpdf-macos-arm64.zip"
+
+      - name: Guardar artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cualpdf-${{ matrix.name }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Subir al Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/*

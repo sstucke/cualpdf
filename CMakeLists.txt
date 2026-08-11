@@ -15,9 +15,9 @@ qt_standard_project_setup(I18N_TRANSLATED_LANGUAGES es)
 
 # PDFium is fetched as a prebuilt binary from bblanchon/pdfium-binaries
 # (BSD-3-Clause, https://github.com/bblanchon/pdfium-binaries), pinned by
-# release tag and SHA256 so builds stay reproducible. Only Linux x64 is wired
-# up so far; add the matching asset name and hash for Windows/macOS here when
-# those platforms are brought up.
+# release tag and SHA256 so builds stay reproducible. Linux x64, macOS
+# arm64, and Windows x64 are wired up; add other architectures here as
+# needed (e.g. Windows arm64, macOS x64).
 if(POLICY CMP0135)
     cmake_policy(SET CMP0135 NEW)
 endif()
@@ -30,6 +30,9 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Darwin" AND CMAKE_SYSTEM_PROCESSOR STREQUAL "arm64")
     set(PDFIUM_ASSET "pdfium-mac-arm64.tgz")
     set(PDFIUM_URL_HASH "SHA256=e214ee33f22b2204daa765a545aee1e425d88448e6154dac95c6a06206b7437f")
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
+    set(PDFIUM_ASSET "pdfium-win-x64.tgz")
+    set(PDFIUM_URL_HASH "SHA256=55329d5cb5de8a379a2fc563106492d7f385a1f795d18970922c71f708f9fbb4")
 else()
     message(FATAL_ERROR
         "No PDFium prebuilt binary is wired up yet for "
@@ -67,6 +70,18 @@ set_target_properties(cualpdf PROPERTIES
     MACOSX_BUNDLE ON
 )
 
+# Windows has no rpath mechanism, so pdfium.dll must sit next to the .exe
+# (both for build-tree runs and for the installed layout) or the app fails
+# to start with a missing-DLL error.
+if(WIN32)
+    add_custom_command(TARGET cualpdf POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${pdfium_SOURCE_DIR}/bin/pdfium.dll"
+            "$<TARGET_FILE_DIR:cualpdf>"
+        COMMENT "Copying pdfium.dll next to cualpdf.exe"
+    )
+endif()
+
 # Spanish UI translation. English source strings live in tr() calls; the
 # Spanish text lives in translations/cualpdf_es.ts (edited by hand/Linguist).
 # qt_add_translations compiles it to a .qm embedded as a Qt resource, so no
@@ -81,3 +96,13 @@ install(TARGETS cualpdf
     BUNDLE DESTINATION .
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
+
+if(WIN32)
+    install(FILES "${pdfium_SOURCE_DIR}/bin/pdfium.dll" DESTINATION ${CMAKE_INSTALL_BINDIR})
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    install(FILES "${pdfium_SOURCE_DIR}/lib/libpdfium.so" DESTINATION ${CMAKE_INSTALL_BINDIR})
+endif()
+# macOS: libpdfium.dylib is bundled into cualpdf.app/Contents/Frameworks by
+# the packaging step in .github/workflows/release.yml (after macdeployqt),
+# since it needs an install_name/rpath fixup that only makes sense once the
+# app bundle exists.
