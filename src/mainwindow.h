@@ -43,6 +43,7 @@ private:
     void resetZoom();
     void showAboutDialog();
     void onTabCloseRequested(int index);
+    void onTabContextMenuRequested(const QPoint &pos);
     void onTreeContextMenuRequested(const QPoint &pos);
     void onFavoritesContextMenuRequested(const QPoint &pos);
     void onFavoriteItemActivated(QListWidgetItem *item);
@@ -55,6 +56,7 @@ private:
     void updateDetailsPanel(const QString &filePath);
     void clearDetailsPanel();
     void openPdfViewerTab(const QString &filePath);
+    void closePdfTabs();
     void openWithSystemDefault(const QString &filePath);
     void addRecentFile(const QString &filePath);
     void rebuildRecentFilesMenu();

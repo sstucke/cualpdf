@@ -32,6 +32,21 @@
 <context>
     <name>MainWindow</name>
     <message>
+        <location filename="../src/mainwindow.cpp" line="375"/>
+        <source>Close Tab</source>
+        <translation>Cerrar pestaña</translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.cpp" line="376"/>
+        <source>Close Other Tabs</source>
+        <translation>Cerrar las demás pestañas</translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.cpp" line="377"/>
+        <source>Close All PDF Tabs</source>
+        <translation>Cerrar todas las pestañas PDF</translation>
+    </message>
+    <message>
         <location filename="../src/mainwindow.ui" line="14"/>
         <source>cualpdf</source>
         <translation>cualpdf</translation>
@@ -278,6 +293,66 @@ Un editor de PDF rápido, liviano y de código abierto.</translation>
 </context>
 <context>
     <name>PdfViewerWidget</name>
+    <message>
+        <location filename="../src/pdfviewerwidget.cpp" line="90"/>
+        <source>Previous Page</source>
+        <translation>Página anterior</translation>
+    </message>
+    <message>
+        <location filename="../src/pdfviewerwidget.cpp" line="97"/>
+        <source>Page</source>
+        <translation>Página</translation>
+    </message>
+    <message>
+        <location filename="../src/pdfviewerwidget.cpp" line="106"/>
+        <source>Next Page</source>
+        <translation>Página siguiente</translation>
+    </message>
+    <message>
+        <location filename="../src/pdfviewerwidget.cpp" line="112"/>
+        <source>Page Layout</source>
+        <translation>Disposición de página</translation>
+    </message>
+    <message>
+        <location filename="../src/pdfviewerwidget.cpp" line="113"/>
+        <source>Single Page</source>
+        <translation>Página única</translation>
+    </message>
+    <message>
+        <location filename="../src/pdfviewerwidget.cpp" line="114"/>
+        <source>Continuous</source>
+        <translation>Continuo</translation>
+    </message>
+    <message>
+        <location filename="../src/pdfviewerwidget.cpp" line="115"/>
+        <source>Multiple Columns</source>
+        <translation>Múltiples columnas</translation>
+    </message>
+    <message>
+        <location filename="../src/pdfviewerwidget.cpp" line="124"/>
+        <source>Zoom Out</source>
+        <translation>Alejar</translation>
+    </message>
+    <message>
+        <location filename="../src/pdfviewerwidget.cpp" line="131"/>
+        <source>Zoom</source>
+        <translation>Zoom</translation>
+    </message>
+    <message>
+        <location filename="../src/pdfviewerwidget.cpp" line="132"/>
+        <source>Fit Page</source>
+        <translation>Ajustar página</translation>
+    </message>
+    <message>
+        <location filename="../src/pdfviewerwidget.cpp" line="133"/>
+        <source>Fit Width</source>
+        <translation>Ajustar al ancho</translation>
+    </message>
+    <message>
+        <location filename="../src/pdfviewerwidget.cpp" line="140"/>
+        <source>Zoom In</source>
+        <translation>Acercar</translation>
+    </message>
     <message>
         <location filename="../src/pdfviewerwidget.cpp" line="34"/>
         <source>Loading…</source>

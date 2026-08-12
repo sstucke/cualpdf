@@ -3,6 +3,7 @@
 #include <QImage>
 #include <QSizeF>
 #include <QString>
+#include <QVector>
 
 // Thin RAII wrapper around PDFium's C API. Keeps every FPDF_* type out of
 // this header so callers do not need PDFium's include path.
@@ -23,6 +24,10 @@ public:
     bool isValid() const { return m_document != nullptr; }
     int pageCount() const;
     QSizeF pageSizePoints(int pageIndex) const;
+
+    // Returns sizes for all pages in a single mutex acquisition — use this
+    // instead of calling pageSizePoints() in a loop to avoid N lock round-trips.
+    QVector<QSizeF> allPageSizes() const;
 
     // Renders a page at the given width in pixels, preserving aspect ratio.
     QImage renderPage(int pageIndex, int targetWidthPx) const;

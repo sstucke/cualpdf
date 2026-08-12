@@ -87,6 +87,27 @@ QSizeF PdfDocument::pageSizePoints(int pageIndex) const
     return QSizeF(size.width, size.height);
 }
 
+QVector<QSizeF> PdfDocument::allPageSizes() const
+{
+    if (!m_document)
+        return {};
+
+    const QMutexLocker locker(&pdfiumMutex());
+    const auto doc = static_cast<FPDF_DOCUMENT>(m_document);
+    const int count = FPDF_GetPageCount(doc);
+
+    QVector<QSizeF> sizes;
+    sizes.reserve(count);
+    for (int i = 0; i < count; ++i) {
+        FS_SIZEF size;
+        if (FPDF_GetPageSizeByIndexF(doc, i, &size))
+            sizes.append(QSizeF(size.width, size.height));
+        else
+            sizes.append(QSizeF(595, 842)); // A4 fallback
+    }
+    return sizes;
+}
+
 QImage PdfDocument::renderPage(int pageIndex, int targetWidthPx) const
 {
     if (!m_document || targetWidthPx <= 0)

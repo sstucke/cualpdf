@@ -76,6 +76,10 @@ MainWindow::MainWindow(QWidget *parent)
 
     ui->tabWidget->setTabsClosable(true);
     if (QTabBar *tabBar = ui->tabWidget->tabBar()) {
+        tabBar->setContextMenuPolicy(Qt::CustomContextMenu);
+        connect(tabBar, &QTabBar::customContextMenuRequested, this,
+                &MainWindow::onTabContextMenuRequested);
+
         const auto closeButtonSide = static_cast<QTabBar::ButtonPosition>(
             style()->styleHint(QStyle::SH_TabBar_CloseButtonPosition, nullptr, tabBar));
         if (QWidget *closeButton = tabBar->tabButton(0, closeButtonSide))
@@ -358,6 +362,44 @@ void MainWindow::onTabCloseRequested(int index)
     widget->deleteLater();
 }
 
+void MainWindow::onTabContextMenuRequested(const QPoint &pos)
+{
+    QTabBar *tabBar = ui->tabWidget->tabBar();
+    const int tabIndex = tabBar->tabAt(pos);
+
+    // The Explorer tab is permanent and has no PDF-tab actions.
+    if (tabIndex <= 0)
+        return;
+
+    QMenu menu(this);
+    QAction *closeAction = menu.addAction(tr("Close Tab"));
+    QAction *closeOthersAction = menu.addAction(tr("Close Other Tabs"));
+    QAction *closeAllAction = menu.addAction(tr("Close All PDF Tabs"));
+
+    QAction *chosen = menu.exec(tabBar->mapToGlobal(pos));
+    if (chosen == closeAction) {
+        onTabCloseRequested(tabIndex);
+    } else if (chosen == closeOthersAction) {
+        for (int index = ui->tabWidget->count() - 1; index > 0; --index) {
+            if (index != tabIndex)
+                onTabCloseRequested(index);
+        }
+        ui->tabWidget->setCurrentIndex(1);
+    } else if (chosen == closeAllAction) {
+        closePdfTabs();
+    }
+}
+
+void MainWindow::closePdfTabs()
+{
+    // Close from right to left so removing a tab never changes the index of
+    // a tab that is still waiting to be closed. Index zero is Explorer.
+    for (int index = ui->tabWidget->count() - 1; index > 0; --index)
+        onTabCloseRequested(index);
+
+    ui->tabWidget->setCurrentIndex(0);
+}
+
 void MainWindow::setCurrentFolder(const QString &path)
 {
     qInfo() << "Opening folder:" << path;
@@ -406,7 +448,8 @@ void MainWindow::updateDetailsPanel(const QString &filePath)
         delete item;
     }
 
-    auto *viewer = new PdfViewerWidget(filePath, kInlinePreviewWidth, ui->previewContainer);
+    auto *viewer = new PdfViewerWidget(filePath, kInlinePreviewWidth, ui->previewContainer,
+                                       /*showToolbar=*/false);
     ui->previewContainerLayout->addWidget(viewer);
 
     // The viewer opens and lays out the document on a worker thread so a
