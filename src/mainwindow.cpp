@@ -16,6 +16,7 @@
 #include <QFileInfo>
 #include <QFileSystemModel>
 #include <QFrame>
+#include <QHBoxLayout>
 #include <QItemSelection>
 #include <QLabel>
 #include <QLayoutItem>
@@ -23,6 +24,9 @@
 #include <QLocale>
 #include <QMenu>
 #include <QMessageBox>
+#include <QPainter>
+#include <QPalette>
+#include <QSignalBlocker>
 #include <QSlider>
 #include <QStandardPaths>
 #include <QStyle>
@@ -34,6 +38,62 @@
 namespace {
 constexpr int kInlinePreviewWidth = 220;
 constexpr int kFullViewerPageWidth = 900;
+
+QPixmap zoomIcon(bool zoomIn, const QColor &color)
+{
+    QPixmap pixmap(22, 22);
+    pixmap.fill(Qt::transparent);
+
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing);
+    QPen pen(color, 1.8, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+    painter.setPen(pen);
+    painter.setBrush(Qt::NoBrush);
+    painter.drawEllipse(QRectF(3.0, 3.0, 11.0, 11.0));
+    painter.drawLine(QPointF(12.3, 12.3), QPointF(19.0, 19.0));
+    painter.drawLine(QPointF(5.8, 8.5), QPointF(11.2, 8.5));
+    if (zoomIn)
+        painter.drawLine(QPointF(8.5, 5.8), QPointF(8.5, 11.2));
+    return pixmap;
+}
+
+QWidget *makeZoomControl(QSlider *slider, const QString &toolTip,
+                         const QString &zoomOutToolTip, const QString &zoomInToolTip,
+                         QWidget *parent)
+{
+    auto *control = new QWidget(parent);
+    auto *layout = new QHBoxLayout(control);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(2);
+    layout->setSizeConstraint(QLayout::SetFixedSize);
+    control->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+
+    const QColor iconColor = control->palette().color(QPalette::WindowText);
+    auto *zoomOutButton = new QToolButton(control);
+    zoomOutButton->setAutoRaise(true);
+    zoomOutButton->setFixedSize(24, 24);
+    zoomOutButton->setIconSize(QSize(22, 22));
+    zoomOutButton->setIcon(QIcon(zoomIcon(false, iconColor)));
+    zoomOutButton->setToolTip(zoomOutToolTip);
+    auto *zoomInButton = new QToolButton(control);
+    zoomInButton->setAutoRaise(true);
+    zoomInButton->setFixedSize(24, 24);
+    zoomInButton->setIconSize(QSize(22, 22));
+    zoomInButton->setIcon(QIcon(zoomIcon(true, iconColor)));
+    zoomInButton->setToolTip(zoomInToolTip);
+
+    slider->setToolTip(toolTip);
+    layout->addWidget(zoomOutButton);
+    layout->addWidget(slider);
+    layout->addWidget(zoomInButton);
+    QObject::connect(zoomOutButton, &QToolButton::clicked, slider, [slider]() {
+        slider->setValue(slider->value() - slider->singleStep());
+    });
+    QObject::connect(zoomInButton, &QToolButton::clicked, slider, [slider]() {
+        slider->setValue(slider->value() + slider->singleStep());
+    });
+    return control;
+}
 }
 
 MainWindow::MainWindow(QWidget *parent)
@@ -67,12 +127,25 @@ MainWindow::MainWindow(QWidget *parent)
     gridContentDelegate = new PdfGridItemDelegate(ui->folderContentView);
 
     zoomSlider->setRange(kMinIconSize, kMaxIconSize);
+    zoomSlider->setSingleStep(kZoomStep);
     zoomSlider->setValue(kDefaultThumbnailSize);
     zoomSlider->setFixedWidth(120);
-    zoomSlider->setToolTip(tr("Thumbnail size"));
+    thumbnailZoomWidget = makeZoomControl(
+        zoomSlider, tr("Thumbnail zoom"), tr("Zoom out thumbnails"),
+        tr("Zoom in thumbnails"), this);
+
+    pageZoomSlider = new QSlider(Qt::Horizontal, this);
+    pageZoomSlider->setRange(10, 400);
+    pageZoomSlider->setSingleStep(5);
+    pageZoomSlider->setPageStep(25);
+    pageZoomSlider->setValue(100);
+    pageZoomSlider->setFixedWidth(140);
+    pageZoomWidget = makeZoomControl(
+        pageZoomSlider, tr("Page zoom"), tr("Zoom out page"), tr("Zoom in page"), this);
 
     ui->statusbar->addWidget(itemCountLabel);
-    ui->statusbar->addPermanentWidget(zoomSlider);
+    ui->statusbar->addPermanentWidget(thumbnailZoomWidget);
+    ui->statusbar->addPermanentWidget(pageZoomWidget);
 
     ui->tabWidget->setTabsClosable(true);
     if (QTabBar *tabBar = ui->tabWidget->tabBar()) {
@@ -106,6 +179,8 @@ MainWindow::MainWindow(QWidget *parent)
     connect(ui->locationEdit, &QLineEdit::returnPressed, this, &MainWindow::onLocationEditReturnPressed);
 
     connect(ui->tabWidget, &QTabWidget::tabCloseRequested, this, &MainWindow::onTabCloseRequested);
+    connect(ui->tabWidget, &QTabWidget::currentChanged, this,
+            [this]() { updateStatusBarForCurrentTab(); });
 
     connect(ui->actionOpenFolder, &QAction::triggered, this, &MainWindow::openFolder);
     connect(ui->actionExit, &QAction::triggered, this, &QWidget::close);
@@ -116,6 +191,10 @@ MainWindow::MainWindow(QWidget *parent)
     connect(ui->actionResetZoom, &QAction::triggered, this, &MainWindow::resetZoom);
     connect(ui->actionAbout, &QAction::triggered, this, &MainWindow::showAboutDialog);
     connect(zoomSlider, &QSlider::valueChanged, this, &MainWindow::onZoomSliderChanged);
+    connect(pageZoomSlider, &QSlider::valueChanged, this, [this](int percent) {
+        if (auto *viewer = qobject_cast<PdfViewerWidget *>(ui->tabWidget->currentWidget()))
+            viewer->setZoomPercent(percent);
+    });
 
     setupViewModeMenu();
     applyContentViewMode(appSettings.contentViewMode());
@@ -129,6 +208,7 @@ MainWindow::MainWindow(QWidget *parent)
 
     clearDetailsPanel();
     setCurrentFolder(QStandardPaths::writableLocation(QStandardPaths::HomeLocation));
+    updateStatusBarForCurrentTab();
 }
 
 MainWindow::~MainWindow()
@@ -345,6 +425,24 @@ void MainWindow::applyContentViewMode(AppSettings::ContentViewMode mode)
     appSettings.setContentViewMode(mode);
 }
 
+void MainWindow::updateStatusBarForCurrentTab()
+{
+    auto *viewer = qobject_cast<PdfViewerWidget *>(ui->tabWidget->currentWidget());
+    const bool showingExplorer = viewer == nullptr;
+
+    thumbnailZoomWidget->setVisible(showingExplorer);
+    pageZoomWidget->setVisible(viewer != nullptr);
+    itemCountLabel->setVisible(showingExplorer);
+    ui->actionZoomIn->setEnabled(showingExplorer);
+    ui->actionZoomOut->setEnabled(showingExplorer);
+    ui->actionResetZoom->setEnabled(showingExplorer);
+
+    if (viewer) {
+        const QSignalBlocker blocker(pageZoomSlider);
+        pageZoomSlider->setValue(viewer->zoomPercent());
+    }
+}
+
 void MainWindow::showAboutDialog()
 {
     QMessageBox::about(this, tr("About cualpdf"),
@@ -519,6 +617,13 @@ void MainWindow::openPdfViewerTab(const QString &filePath)
 
     auto *viewer = new PdfViewerWidget(filePath, kFullViewerPageWidth, ui->tabWidget);
     viewer->setProperty("filePath", filePath);
+    connect(viewer, &PdfViewerWidget::zoomPercentChanged, this,
+            [this, viewer](int percent) {
+                if (ui->tabWidget->currentWidget() != viewer)
+                    return;
+                const QSignalBlocker blocker(pageZoomSlider);
+                pageZoomSlider->setValue(percent);
+            });
 
     const int index = ui->tabWidget->addTab(viewer, QFileInfo(filePath).fileName());
     ui->tabWidget->setCurrentIndex(index);

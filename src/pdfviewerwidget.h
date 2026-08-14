@@ -9,6 +9,7 @@
 #include <memory>
 
 class PdfDocument;
+class QAction;
 class QComboBox;
 class QGridLayout;
 class QLabel;
@@ -32,14 +33,20 @@ public:
     QString filePath() const { return m_filePath; }
     int pageCount() const { return m_pageLabels.size(); }
     int currentPageIndex() const { return m_currentPageIndex; }
+    int zoomPercent() const
+    {
+        return m_zoomMode == ZoomMode::Custom ? m_zoomPercent : m_effectiveZoomPercent;
+    }
 
 public slots:
     void goToPage(int pageIndex);
+    void setZoomPercent(int percent);
 
 signals:
     // Emitted once after the background load finishes (success or failure).
     void documentLoaded(bool valid, int pageCount);
     void currentPageChanged(int pageIndex);
+    void zoomPercentChanged(int percent);
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
@@ -50,15 +57,15 @@ private slots:
 
 private:
     enum class PageLayout {
-        SinglePage,
         Continuous,
-        MultipleColumns,
+        Discrete,
     };
 
     enum class ZoomMode {
         FixedWidth,
         FitPage,
         FitWidth,
+        FitTwoColumns,
         Custom,
     };
 
@@ -76,9 +83,16 @@ private:
     void applyTypedZoom();
     void syncNavigationControls();
     void syncZoomControl();
+    void syncViewControl();
+    void syncFitControl();
+    void navigateByPageGroup(int direction);
     void scrollToCurrentPage();
     QSizeF pageSize(int pageIndex) const;
-    int multiColumnCount() const;
+    int availableColumnCount() const;
+    int fitTwoColumnCount() const;
+    QSize discreteGridShape() const;
+    int discretePageCount() const;
+    int discreteChunkStart() const;
     void scheduleRender(int pageIndex, int widthPx);
     void onPageRendered(int pageIndex, int widthPx, const QImage &image);
 
@@ -98,14 +112,21 @@ private:
     QSpinBox *m_pageSpinBox = nullptr;
     QLabel *m_pageCountLabel = nullptr;
     QToolButton *m_nextPageButton = nullptr;
-    QComboBox *m_pageLayoutCombo = nullptr;
+    QToolButton *m_viewModeButton = nullptr;
+    QAction *m_continuousAction = nullptr;
+    QAction *m_discreteAction = nullptr;
     QToolButton *m_zoomOutButton = nullptr;
     QComboBox *m_zoomCombo = nullptr;
     QToolButton *m_zoomInButton = nullptr;
+    QToolButton *m_zoomFitButton = nullptr;
+    QAction *m_fitPageAction = nullptr;
+    QAction *m_fitWidthAction = nullptr;
+    QAction *m_fitTwoColumnsAction = nullptr;
     PageLayout m_pageLayout = PageLayout::Continuous;
     ZoomMode m_zoomMode = ZoomMode::FixedWidth;
     int m_zoomPercent = 100;
     int m_effectiveZoomPercent = 100;
+    int m_lastReportedZoomPercent = -1;
     bool m_updatingControls = false;
     bool m_valid = false;
     int m_currentPageIndex = -1;

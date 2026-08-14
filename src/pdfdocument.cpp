@@ -80,11 +80,13 @@ QSizeF PdfDocument::pageSizePoints(int pageIndex) const
         return {};
 
     const QMutexLocker locker(&pdfiumMutex());
-    FS_SIZEF size;
-    if (!FPDF_GetPageSizeByIndexF(static_cast<FPDF_DOCUMENT>(m_document), pageIndex, &size))
+    const FPDF_PAGE page = FPDF_LoadPage(static_cast<FPDF_DOCUMENT>(m_document), pageIndex);
+    if (!page)
         return {};
 
-    return QSizeF(size.width, size.height);
+    const QSizeF size(FPDF_GetPageWidthF(page), FPDF_GetPageHeightF(page));
+    FPDF_ClosePage(page);
+    return size;
 }
 
 QVector<QSizeF> PdfDocument::allPageSizes() const
@@ -99,11 +101,17 @@ QVector<QSizeF> PdfDocument::allPageSizes() const
     QVector<QSizeF> sizes;
     sizes.reserve(count);
     for (int i = 0; i < count; ++i) {
-        FS_SIZEF size;
-        if (FPDF_GetPageSizeByIndexF(doc, i, &size))
-            sizes.append(QSizeF(size.width, size.height));
-        else
+        const FPDF_PAGE page = FPDF_LoadPage(doc, i);
+        if (!page) {
             sizes.append(QSizeF(595, 842)); // A4 fallback
+            continue;
+        }
+
+        const QSizeF size(FPDF_GetPageWidthF(page), FPDF_GetPageHeightF(page));
+        FPDF_ClosePage(page);
+        sizes.append(size.width() > 0.0 && size.height() > 0.0
+                         ? size
+                         : QSizeF(595, 842));
     }
     return sizes;
 }

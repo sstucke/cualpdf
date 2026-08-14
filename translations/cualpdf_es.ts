@@ -168,6 +168,30 @@
         <translation>Tamaño de miniatura</translation>
     </message>
     <message>
+        <source>Thumbnail zoom</source>
+        <translation>Zoom de miniaturas</translation>
+    </message>
+    <message>
+        <source>Page zoom</source>
+        <translation>Zoom de página</translation>
+    </message>
+    <message>
+        <source>Zoom out thumbnails</source>
+        <translation>Alejar miniaturas</translation>
+    </message>
+    <message>
+        <source>Zoom in thumbnails</source>
+        <translation>Acercar miniaturas</translation>
+    </message>
+    <message>
+        <source>Zoom out page</source>
+        <translation>Alejar página</translation>
+    </message>
+    <message>
+        <source>Zoom in page</source>
+        <translation>Acercar página</translation>
+    </message>
+    <message>
         <location filename="../src/mainwindow.cpp" line="137"/>
         <source>Open Folder</source>
         <translation>Abrir carpeta</translation>
@@ -324,6 +348,30 @@ Un editor de PDF rápido, liviano y de código abierto.</translation>
         <translation>Continuo</translation>
     </message>
     <message>
+        <source>View Mode</source>
+        <translation>Modo de vista</translation>
+    </message>
+    <message>
+        <source>Discrete</source>
+        <translation>Discreto</translation>
+    </message>
+    <message>
+        <source>Page Fit</source>
+        <translation>Ajuste</translation>
+    </message>
+    <message>
+        <source>Width</source>
+        <translation>Ancho</translation>
+    </message>
+    <message>
+        <source>Two Columns</source>
+        <translation>2 columnas</translation>
+    </message>
+    <message>
+        <source>Fit</source>
+        <translation>Ajuste</translation>
+    </message>
+    <message>
         <location filename="../src/pdfviewerwidget.cpp" line="115"/>
         <source>Multiple Columns</source>
         <translation>Múltiples columnas</translation>
@@ -347,6 +395,10 @@ Un editor de PDF rápido, liviano y de código abierto.</translation>
         <location filename="../src/pdfviewerwidget.cpp" line="133"/>
         <source>Fit Width</source>
         <translation>Ajustar al ancho</translation>
+    </message>
+    <message>
+        <source>Fit Two Columns</source>
+        <translation>Ajustar a 2 columnas</translation>
     </message>
     <message>
         <location filename="../src/pdfviewerwidget.cpp" line="140"/>

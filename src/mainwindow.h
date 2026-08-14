@@ -12,6 +12,7 @@ class QFileSystemModel;
 class QLabel;
 class QListWidgetItem;
 class QSlider;
+class QWidget;
 class QModelIndex;
 class QPoint;
 class QActionGroup;
@@ -62,12 +63,16 @@ private:
     void rebuildRecentFilesMenu();
     void setupViewModeMenu();
     void applyContentViewMode(AppSettings::ContentViewMode mode);
+    void updateStatusBarForCurrentTab();
 
     Ui::MainWindow *ui;
     QFileSystemModel *treeModel;
     FolderContentModel *contentModel;
     QLabel *itemCountLabel;
     QSlider *zoomSlider;
+    QWidget *thumbnailZoomWidget = nullptr;
+    QSlider *pageZoomSlider = nullptr;
+    QWidget *pageZoomWidget = nullptr;
     QActionGroup *viewModeActionGroup = nullptr;
     QAbstractItemDelegate *defaultContentDelegate = nullptr;
     QAbstractItemDelegate *detailsContentDelegate = nullptr;
