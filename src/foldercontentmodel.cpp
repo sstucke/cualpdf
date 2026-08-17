@@ -3,6 +3,7 @@
 #include "pdfdocument.h"
 
 #include <QCoreApplication>
+#include <QCollator>
 #include <QDateTime>
 #include <QDir>
 #include <QFileIconProvider>
@@ -13,6 +14,8 @@
 #include <QPointer>
 #include <QThread>
 
+#include <algorithm>
+
 FolderContentModel::FolderContentModel(QObject *parent)
     : QAbstractListModel(parent)
 {
@@ -22,6 +25,7 @@ void FolderContentModel::setDirectory(const QString &path)
 {
     beginResetModel();
 
+    ++m_generation;
     m_directory = path;
     m_entries.clear();
     m_pdfInfoCache.clear();
@@ -40,10 +44,80 @@ void FolderContentModel::setDirectory(const QString &path)
         entry.fileName = info.fileName();
         entry.absolutePath = info.absoluteFilePath();
         entry.isDir = info.isDir();
+        entry.size = info.isFile() ? info.size() : 0;
+        entry.lastModified = info.lastModified();
         m_entries.append(entry);
     }
 
+    sortEntries();
+
     endResetModel();
+}
+
+void FolderContentModel::setSortMode(SortMode mode)
+{
+    if (m_sortMode == mode)
+        return;
+
+    beginResetModel();
+    m_sortMode = mode;
+    sortEntries();
+    endResetModel();
+}
+
+void FolderContentModel::setFoldersFirst(bool enabled)
+{
+    if (m_foldersFirst == enabled)
+        return;
+
+    beginResetModel();
+    m_foldersFirst = enabled;
+    sortEntries();
+    endResetModel();
+}
+
+void FolderContentModel::sortEntries()
+{
+    QCollator collator;
+    collator.setCaseSensitivity(Qt::CaseInsensitive);
+    collator.setNumericMode(true);
+
+    const SortMode mode = m_sortMode;
+    const bool foldersFirst = m_foldersFirst;
+    std::stable_sort(m_entries.begin(), m_entries.end(), [&collator, mode, foldersFirst](
+                                                             const Entry &left,
+                                                             const Entry &right) {
+        if (foldersFirst && left.isDir != right.isDir)
+            return left.isDir;
+
+        int comparison = 0;
+        switch (mode) {
+        case SortMode::NameAscending:
+        case SortMode::NameDescending:
+            comparison = collator.compare(left.fileName, right.fileName);
+            break;
+        case SortMode::SizeAscending:
+        case SortMode::SizeDescending:
+            comparison = left.size < right.size ? -1 : (left.size > right.size ? 1 : 0);
+            break;
+        case SortMode::DateAscending:
+        case SortMode::DateDescending:
+            comparison = left.lastModified < right.lastModified
+                             ? -1
+                             : (left.lastModified > right.lastModified ? 1 : 0);
+            break;
+        }
+
+        const bool descending = mode == SortMode::NameDescending
+                                || mode == SortMode::SizeDescending
+                                || mode == SortMode::DateDescending;
+        if (descending)
+            comparison = -comparison;
+
+        if (comparison == 0)
+            comparison = collator.compare(left.fileName, right.fileName);
+        return comparison < 0;
+    });
 }
 
 void FolderContentModel::setThumbnailSize(int size)
@@ -52,6 +126,7 @@ void FolderContentModel::setThumbnailSize(int size)
         return;
 
     m_thumbnailSize = size;
+    ++m_generation;
     m_pdfInfoCache.clear();
     m_pendingPaths.clear();
     m_loadQueue.clear();
@@ -123,7 +198,7 @@ void FolderContentModel::enqueueThumbnailLoad(const Entry &entry) const
         return;
 
     m_pendingPaths.insert(entry.absolutePath);
-    m_loadQueue.enqueue(entry);
+    m_loadQueue.enqueue({entry, m_generation});
 
     if (m_activeLoads < kMaxConcurrentLoads)
         startNextLoad();
@@ -134,9 +209,11 @@ void FolderContentModel::startNextLoad() const
     if (m_loadQueue.isEmpty())
         return;
 
-    const Entry entry = m_loadQueue.dequeue();
+    const LoadRequest request = m_loadQueue.dequeue();
+    const Entry entry = request.entry;
     const QString path = entry.absolutePath;
     const int thumbSize = m_thumbnailSize;
+    const quint64 generation = request.generation;
 
     ++m_activeLoads;
 
@@ -149,7 +226,7 @@ void FolderContentModel::startNextLoad() const
     // worker thread finishes. See PdfViewerWidget::startLoading() for the
     // same pattern (found via a real crash's backtrace).
     const QPointer<FolderContentModel> weakSelf(const_cast<FolderContentModel *>(this));
-    QThread *thread = QThread::create([weakSelf, path, thumbSize]() {
+    QThread *thread = QThread::create([weakSelf, path, thumbSize, generation]() {
         PdfInfo info;
         info.loaded = true;
 
@@ -166,9 +243,9 @@ void FolderContentModel::startNextLoad() const
 
         QMetaObject::invokeMethod(
             qApp,
-            [weakSelf, path, info]() {
+            [weakSelf, path, generation, info]() {
                 if (weakSelf)
-                    weakSelf->onThumbnailLoaded(path, info);
+                    weakSelf->onThumbnailLoaded(path, generation, info);
             },
             Qt::QueuedConnection);
     });
@@ -176,9 +253,15 @@ void FolderContentModel::startNextLoad() const
     thread->start();
 }
 
-void FolderContentModel::onThumbnailLoaded(const QString &path, PdfInfo info)
+void FolderContentModel::onThumbnailLoaded(const QString &path, quint64 generation,
+                                           PdfInfo info)
 {
     --m_activeLoads;
+
+    if (generation != m_generation) {
+        startNextLoad();
+        return;
+    }
     m_pendingPaths.remove(path);
 
     // Find the row for this path — discard if directory changed while loading

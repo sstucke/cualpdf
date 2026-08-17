@@ -1,6 +1,8 @@
 #pragma once
 
 #include <QHash>
+#include <QRectF>
+#include <QSet>
 #include <QSizeF>
 #include <QString>
 #include <QVector>
@@ -30,6 +32,9 @@ public:
     ~PdfViewerWidget() override;
 
     bool isValid() const { return m_valid; }
+    bool isModified() const { return m_modified; }
+    bool isSaveInProgress() const { return m_saveInProgress; }
+    bool isOperationInProgress() const { return m_transformInProgress; }
     QString filePath() const { return m_filePath; }
     int pageCount() const { return m_pageLabels.size(); }
     int currentPageIndex() const { return m_currentPageIndex; }
@@ -41,12 +46,16 @@ public:
 public slots:
     void goToPage(int pageIndex);
     void setZoomPercent(int percent);
+    void saveDocument(bool createTimestampedBackup, int backupVersionLimit);
 
 signals:
     // Emitted once after the background load finishes (success or failure).
     void documentLoaded(bool valid, int pageCount);
     void currentPageChanged(int pageIndex);
     void zoomPercentChanged(int percent);
+    void modifiedChanged(bool modified);
+    void operationInProgressChanged(bool inProgress);
+    void saveFinished(bool success, const QString &errorMessage);
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
@@ -69,6 +78,11 @@ private:
         Custom,
     };
 
+    enum class SelectionMode {
+        Page,
+        Region,
+    };
+
     void buildToolbar();
     void startLoading();
     void onDocumentLoaded(bool valid, const std::shared_ptr<PdfDocument> &document,
@@ -85,6 +99,20 @@ private:
     void syncZoomControl();
     void syncViewControl();
     void syncFitControl();
+    void setSelectionMode(SelectionMode mode);
+    void applyPageSelectionCommand(int commandIndex);
+    void updateSelectionOverlays();
+    void syncEditControls();
+    void rotateSelectedPages(bool clockwise);
+    void cropSelectedRegion();
+    void finishDocumentTransform(bool success, const QVector<QSizeF> &pageSizes,
+                                 const QVector<int> &affectedPages, bool clearRegion,
+                                 const QString &historyDescription);
+    void recordHistoryEntry(const QString &description);
+    void updateModifiedState();
+    void finishDocumentSave(bool success, const QString &errorMessage);
+    void setCurrentPageFromPointer(int pageIndex);
+    QPointF normalizedPagePosition(const QLabel *label, const QPointF &position) const;
     void navigateByPageGroup(int direction);
     void scrollToCurrentPage();
     QSizeF pageSize(int pageIndex) const;
@@ -94,7 +122,8 @@ private:
     int discretePageCount() const;
     int discreteChunkStart() const;
     void scheduleRender(int pageIndex, int widthPx);
-    void onPageRendered(int pageIndex, int widthPx, const QImage &image);
+    void onPageRendered(int pageIndex, int widthPx, int documentRevision,
+                        const QImage &image);
 
     QString m_filePath;
     int m_initialPageRenderWidth;
@@ -122,8 +151,28 @@ private:
     QAction *m_fitPageAction = nullptr;
     QAction *m_fitWidthAction = nullptr;
     QAction *m_fitTwoColumnsAction = nullptr;
+    QToolButton *m_selectPageButton = nullptr;
+    QToolButton *m_selectRegionButton = nullptr;
+    QComboBox *m_pageSelectionCombo = nullptr;
+    QToolButton *m_cropButton = nullptr;
+    QToolButton *m_rotateCounterclockwiseButton = nullptr;
+    QToolButton *m_rotateClockwiseButton = nullptr;
     PageLayout m_pageLayout = PageLayout::Continuous;
     ZoomMode m_zoomMode = ZoomMode::FixedWidth;
+    SelectionMode m_selectionMode = SelectionMode::Page;
+    QSet<int> m_selectedPages;
+    int m_pageSelectionAnchor = -1;
+    int m_regionPageIndex = -1;
+    QRectF m_regionSelection;
+    QPointF m_regionDragStart;
+    bool m_draggingRegion = false;
+    bool m_transformInProgress = false;
+    bool m_saveInProgress = false;
+    bool m_modified = false;
+    QVector<QString> m_editHistory;
+    int m_historyPosition = 0;
+    int m_savedHistoryPosition = 0;
+    int m_documentRevision = 0;
     int m_zoomPercent = 100;
     int m_effectiveZoomPercent = 100;
     int m_lastReportedZoomPercent = -1;

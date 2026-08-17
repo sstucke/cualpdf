@@ -69,6 +69,12 @@ qt_add_executable(cualpdf
     src/pdfgriditemdelegate.h
     src/appsettings.cpp
     src/appsettings.h
+    src/preferencesdialog.cpp
+    src/preferencesdialog.h
+    src/tips.cpp
+    src/tips.h
+    src/tipsdialog.cpp
+    src/tipsdialog.h
 )
 
 target_link_libraries(cualpdf PRIVATE Qt6::Widgets pdfium)

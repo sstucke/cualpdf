@@ -27,6 +27,18 @@ public:
     QStringList favoriteFolders() const;
     void setFavoriteFolders(const QStringList &folders);
 
+    bool createTimestampedBackups() const;
+    void setCreateTimestampedBackups(bool enabled);
+
+    int backupVersionLimit() const;
+    void setBackupVersionLimit(int limit);
+
+    bool showTipsAtStartup() const;
+    void setShowTipsAtStartup(bool enabled);
+
+    bool autoCloseTips() const;
+    void setAutoCloseTips(bool enabled);
+
 private:
     QSettings m_settings;
 };

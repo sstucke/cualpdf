@@ -3,18 +3,27 @@
 #include "pdfdocument.h"
 
 #include <QActionGroup>
+#include <QButtonGroup>
 #include <QComboBox>
 #include <QCoreApplication>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QDoubleSpinBox>
 #include <QFrame>
 #include <QGridLayout>
+#include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
 #include <QLoggingCategory>
 #include <QMenu>
+#include <QMouseEvent>
 #include <QPainter>
+#include <QPainterPath>
 #include <QPalette>
 #include <QPointer>
+#include <QPushButton>
+#include <QRadioButton>
 #include <QResizeEvent>
 #include <QScrollArea>
 #include <QScrollBar>
@@ -29,6 +38,7 @@
 #include <QWheelEvent>
 
 #include <array>
+#include <algorithm>
 
 namespace {
 constexpr int kPageSpacing = 12;
@@ -103,6 +113,442 @@ QIcon fitModeIcon(int mode, const QColor &color)
     }
     return QIcon(pixmap);
 }
+
+QIcon selectionModeIcon(bool pageMode, const QColor &color)
+{
+    QPixmap pixmap(24, 20);
+    pixmap.fill(Qt::transparent);
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setPen(QPen(color, 1.5));
+    painter.setBrush(Qt::NoBrush);
+
+    if (pageMode) {
+        painter.drawRoundedRect(QRectF(4, 1.5, 14, 17), 1.5, 1.5);
+        QPolygonF pointer;
+        pointer << QPointF(13, 9) << QPointF(22, 13) << QPointF(18, 15)
+                << QPointF(16, 19);
+        painter.setBrush(color);
+        painter.drawPolygon(pointer);
+    } else {
+        QPen dashedPen(color, 1.5, Qt::DashLine);
+        painter.setPen(dashedPen);
+        painter.drawRect(QRectF(2.5, 2.5, 19, 15));
+    }
+    return QIcon(pixmap);
+}
+
+QIcon cropToolIcon(const QColor &color)
+{
+    QPixmap pixmap(28, 24);
+    pixmap.fill(Qt::transparent);
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing);
+
+    painter.setPen(QPen(color, 1.5, Qt::DashLine));
+    painter.setBrush(Qt::NoBrush);
+    painter.drawRect(QRectF(2.5, 2.5, 17, 16));
+
+    painter.setPen(QPen(color, 1.5, Qt::SolidLine, Qt::RoundCap));
+    painter.drawEllipse(QRectF(18, 13, 4, 4));
+    painter.drawEllipse(QRectF(18, 18, 4, 4));
+    painter.drawLine(QPointF(21.5, 15), QPointF(26, 10.5));
+    painter.drawLine(QPointF(21.5, 20), QPointF(26, 23));
+    return QIcon(pixmap);
+}
+
+QIcon rotationToolIcon(bool clockwise, const QColor &color)
+{
+    QPixmap pixmap(28, 24);
+    pixmap.fill(Qt::transparent);
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setPen(QPen(color, 1.8, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    painter.setBrush(Qt::NoBrush);
+
+    QPainterPath path;
+    if (clockwise) {
+        path.moveTo(6, 7);
+        path.cubicTo(9, 2, 18, 1.5, 22, 7);
+        path.cubicTo(25, 13, 20, 18, 12, 18);
+        painter.drawPath(path);
+        painter.drawLine(QPointF(12, 18), QPointF(15.5, 14.5));
+        painter.drawLine(QPointF(12, 18), QPointF(15.5, 21.5));
+    } else {
+        path.moveTo(22, 7);
+        path.cubicTo(19, 2, 10, 1.5, 6, 7);
+        path.cubicTo(3, 13, 8, 18, 16, 18);
+        painter.drawPath(path);
+        painter.drawLine(QPointF(16, 18), QPointF(12.5, 14.5));
+        painter.drawLine(QPointF(16, 18), QPointF(12.5, 21.5));
+    }
+    return QIcon(pixmap);
+}
+
+QString viewerText(const char *sourceText)
+{
+    return QCoreApplication::translate("PdfViewerWidget", sourceText);
+}
+
+class CropPreviewWidget final : public QWidget
+{
+public:
+    explicit CropPreviewWidget(QWidget *parent = nullptr)
+        : QWidget(parent)
+    {
+        setMinimumSize(300, 330);
+        setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    }
+
+    void setPage(const QPixmap &pixmap, const QSizeF &pageSizePoints)
+    {
+        m_pixmap = pixmap;
+        m_pageSizePoints = pageSizePoints;
+        update();
+    }
+
+    void setMargins(const QMarginsF &marginsPoints)
+    {
+        m_marginsPoints = marginsPoints;
+        update();
+    }
+
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.fillRect(rect(), palette().color(QPalette::Window));
+
+        if (m_pageSizePoints.width() <= 0.0 || m_pageSizePoints.height() <= 0.0)
+            return;
+
+        const QRectF available = QRectF(rect()).adjusted(18, 18, -18, -18);
+        const double scale = qMin(available.width() / m_pageSizePoints.width(),
+                                  available.height() / m_pageSizePoints.height());
+        const QSizeF previewSize(m_pageSizePoints.width() * scale,
+                                 m_pageSizePoints.height() * scale);
+        const QRectF pageRect(available.center().x() - previewSize.width() / 2,
+                              available.center().y() - previewSize.height() / 2,
+                              previewSize.width(), previewSize.height());
+
+        painter.fillRect(pageRect, Qt::white);
+        if (!m_pixmap.isNull())
+            painter.drawPixmap(pageRect.toRect(), m_pixmap);
+        painter.setPen(QPen(QColor(QStringLiteral("#667085")), 1));
+        painter.drawRect(pageRect);
+
+        const QRectF cropRect(
+            pageRect.left() + pageRect.width() * m_marginsPoints.left()
+                                  / m_pageSizePoints.width(),
+            pageRect.top() + pageRect.height() * m_marginsPoints.top()
+                                 / m_pageSizePoints.height(),
+            pageRect.width() * (m_pageSizePoints.width() - m_marginsPoints.left()
+                                - m_marginsPoints.right()) / m_pageSizePoints.width(),
+            pageRect.height() * (m_pageSizePoints.height() - m_marginsPoints.top()
+                                 - m_marginsPoints.bottom()) / m_pageSizePoints.height());
+        if (!cropRect.isValid() || cropRect.isEmpty())
+            return;
+
+        QPainterPath outside;
+        outside.addRect(pageRect);
+        QPainterPath inside;
+        inside.addRect(cropRect);
+        painter.fillPath(outside.subtracted(inside), QColor(0, 0, 0, 80));
+        painter.setPen(QPen(QColor(QStringLiteral("#2684ff")), 2));
+        painter.setBrush(Qt::NoBrush);
+        painter.drawRect(cropRect);
+    }
+
+private:
+    QPixmap m_pixmap;
+    QSizeF m_pageSizePoints;
+    QMarginsF m_marginsPoints;
+};
+
+class CropPagesDialog final : public QDialog
+{
+public:
+    CropPagesDialog(const QPixmap &pagePixmap, const QSizeF &pageSizePoints,
+                    const QMarginsF &selectionMargins, int currentPageIndex,
+                    int pageCount, QWidget *parent = nullptr)
+        : QDialog(parent)
+        , m_pageSizePoints(pageSizePoints)
+        , m_selectionMargins(selectionMargins)
+        , m_marginsPoints(selectionMargins)
+        , m_preview(new CropPreviewWidget(this))
+        , m_sizeLabel(new QLabel(this))
+        , m_unitsCombo(new QComboBox(this))
+        , m_allPagesRadio(new QRadioButton(viewerText("All pages"), this))
+        , m_rangeRadio(new QRadioButton(viewerText("From:"), this))
+        , m_fromPageSpinBox(new QSpinBox(this))
+        , m_toPageSpinBox(new QSpinBox(this))
+        , m_subsetCombo(new QComboBox(this))
+    {
+        setWindowTitle(viewerText("Crop Pages"));
+        resize(820, 570);
+
+        auto *dialogLayout = new QVBoxLayout(this);
+        auto *topLayout = new QHBoxLayout;
+
+        auto *marginGroup = new QGroupBox(viewerText("Crop Box Margins"), this);
+        auto *marginLayout = new QGridLayout(marginGroup);
+        marginLayout->addWidget(new QLabel(viewerText("Units:"), marginGroup), 0, 0);
+        m_unitsCombo->addItem(viewerText("Millimeters"));
+        m_unitsCombo->addItem(viewerText("Points"));
+        marginLayout->addWidget(m_unitsCombo, 0, 1);
+
+        const std::array<QString, 4> labels = {
+            viewerText("Top:"), viewerText("Bottom:"),
+            viewerText("Left:"), viewerText("Right:"),
+        };
+        for (int index = 0; index < static_cast<int>(m_marginSpinBoxes.size()); ++index) {
+            m_marginSpinBoxes[index] = new QDoubleSpinBox(marginGroup);
+            m_marginSpinBoxes[index]->setKeyboardTracking(false);
+            marginLayout->addWidget(new QLabel(labels[index], marginGroup), index + 1, 0);
+            marginLayout->addWidget(m_marginSpinBoxes[index], index + 1, 1);
+            connect(m_marginSpinBoxes[index], &QDoubleSpinBox::valueChanged,
+                    this, [this]() { updateMarginsFromControls(); });
+        }
+
+        auto *zeroButton = new QPushButton(viewerText("Set to Zero"), marginGroup);
+        auto *restoreButton = new QPushButton(viewerText("Restore Selection"), marginGroup);
+        connect(zeroButton, &QPushButton::clicked,
+                this, [this]() { setMargins(QMarginsF()); });
+        connect(restoreButton, &QPushButton::clicked,
+                this, [this]() { setMargins(m_selectionMargins); });
+        marginLayout->addWidget(zeroButton, 5, 0);
+        marginLayout->addWidget(restoreButton, 5, 1);
+        marginLayout->setRowStretch(6, 1);
+        topLayout->addWidget(marginGroup);
+
+        auto *previewLayout = new QVBoxLayout;
+        m_preview->setPage(pagePixmap, pageSizePoints);
+        previewLayout->addWidget(m_preview, 1);
+        m_sizeLabel->setAlignment(Qt::AlignCenter);
+        previewLayout->addWidget(m_sizeLabel);
+        topLayout->addLayout(previewLayout, 1);
+        dialogLayout->addLayout(topLayout, 1);
+
+        auto *rangeGroup = new QGroupBox(viewerText("Page Range"), this);
+        auto *rangeLayout = new QGridLayout(rangeGroup);
+        rangeLayout->addWidget(m_allPagesRadio, 0, 0, 1, 4);
+        rangeLayout->addWidget(m_rangeRadio, 1, 0);
+        m_fromPageSpinBox->setRange(1, pageCount);
+        m_toPageSpinBox->setRange(1, pageCount);
+        m_fromPageSpinBox->setValue(currentPageIndex + 1);
+        m_toPageSpinBox->setValue(currentPageIndex + 1);
+        rangeLayout->addWidget(m_fromPageSpinBox, 1, 1);
+        rangeLayout->addWidget(new QLabel(viewerText("To:"), rangeGroup), 1, 2);
+        rangeLayout->addWidget(m_toPageSpinBox, 1, 3);
+        rangeLayout->addWidget(new QLabel(viewerText("Apply to:"), rangeGroup), 2, 0);
+        m_subsetCombo->addItem(viewerText("All pages"));
+        m_subsetCombo->addItem(viewerText("Even pages only"));
+        m_subsetCombo->addItem(viewerText("Odd pages only"));
+        rangeLayout->addWidget(m_subsetCombo, 2, 1, 1, 3);
+        m_rangeRadio->setChecked(true);
+        dialogLayout->addWidget(rangeGroup);
+
+        auto *buttons = new QDialogButtonBox(
+            QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
+        m_applyButton = buttons->button(QDialogButtonBox::Ok);
+        m_applyButton->setText(viewerText("Apply"));
+        buttons->button(QDialogButtonBox::Cancel)->setText(viewerText("Cancel"));
+        connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
+        connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
+        dialogLayout->addWidget(buttons);
+
+        connect(m_unitsCombo, &QComboBox::currentIndexChanged,
+                this, [this](int unitIndex) {
+                    m_unitIndex = unitIndex;
+                    populateMarginControls();
+                });
+        connect(m_rangeRadio, &QRadioButton::toggled, this, [this](bool checked) {
+            m_fromPageSpinBox->setEnabled(checked);
+            m_toPageSpinBox->setEnabled(checked);
+        });
+
+        populateMarginControls();
+    }
+
+    QMarginsF marginsPoints() const { return m_marginsPoints; }
+
+    QVector<int> affectedPageIndexes() const
+    {
+        const int firstPage = m_allPagesRadio->isChecked()
+                                  ? 0
+                                  : qMin(m_fromPageSpinBox->value(),
+                                         m_toPageSpinBox->value()) - 1;
+        const int lastPage = m_allPagesRadio->isChecked()
+                                 ? m_fromPageSpinBox->maximum() - 1
+                                 : qMax(m_fromPageSpinBox->value(),
+                                        m_toPageSpinBox->value()) - 1;
+        QVector<int> pages;
+        pages.reserve(lastPage - firstPage + 1);
+        for (int pageIndex = firstPage; pageIndex <= lastPage; ++pageIndex) {
+            const int pageNumber = pageIndex + 1;
+            const bool included = m_subsetCombo->currentIndex() == 0
+                                  || (m_subsetCombo->currentIndex() == 1
+                                      && pageNumber % 2 == 0)
+                                  || (m_subsetCombo->currentIndex() == 2
+                                      && pageNumber % 2 != 0);
+            if (included)
+                pages.append(pageIndex);
+        }
+        return pages;
+    }
+
+private:
+    double displayFactor() const
+    {
+        return m_unitIndex == 0 ? 25.4 / 72.0 : 1.0;
+    }
+
+    void populateMarginControls()
+    {
+        const double factor = displayFactor();
+        const QString suffix = m_unitIndex == 0 ? QStringLiteral(" mm")
+                                                 : QStringLiteral(" pt");
+        const std::array<double, 4> values = {
+            m_marginsPoints.top(), m_marginsPoints.bottom(),
+            m_marginsPoints.left(), m_marginsPoints.right(),
+        };
+        const std::array<double, 4> maximums = {
+            m_pageSizePoints.height(), m_pageSizePoints.height(),
+            m_pageSizePoints.width(), m_pageSizePoints.width(),
+        };
+        for (int index = 0; index < static_cast<int>(m_marginSpinBoxes.size()); ++index) {
+            const QSignalBlocker blocker(m_marginSpinBoxes[index]);
+            m_marginSpinBoxes[index]->setDecimals(m_unitIndex == 0 ? 3 : 2);
+            m_marginSpinBoxes[index]->setRange(0.0, maximums[index] * factor);
+            m_marginSpinBoxes[index]->setSuffix(suffix);
+            m_marginSpinBoxes[index]->setValue(values[index] * factor);
+        }
+        updatePreview();
+    }
+
+    void updateMarginsFromControls()
+    {
+        const double inverseFactor = 1.0 / displayFactor();
+        m_marginsPoints = QMarginsF(m_marginSpinBoxes[2]->value() * inverseFactor,
+                                    m_marginSpinBoxes[0]->value() * inverseFactor,
+                                    m_marginSpinBoxes[3]->value() * inverseFactor,
+                                    m_marginSpinBoxes[1]->value() * inverseFactor);
+        updatePreview();
+    }
+
+    void setMargins(const QMarginsF &margins)
+    {
+        m_marginsPoints = margins;
+        populateMarginControls();
+    }
+
+    void updatePreview()
+    {
+        const double croppedWidth = m_pageSizePoints.width() - m_marginsPoints.left()
+                                    - m_marginsPoints.right();
+        const double croppedHeight = m_pageSizePoints.height() - m_marginsPoints.top()
+                                     - m_marginsPoints.bottom();
+        const bool valid = croppedWidth > 0.01 && croppedHeight > 0.01;
+        m_applyButton->setEnabled(valid);
+        m_preview->setMargins(m_marginsPoints);
+
+        const double factor = displayFactor();
+        const QString unit = m_unitIndex == 0 ? QStringLiteral("mm") : QStringLiteral("pt");
+        m_sizeLabel->setText(viewerText("Cropped page size: %1 × %2 %3")
+                                 .arg(QLocale().toString(qMax(0.0, croppedWidth * factor), 'f', 2),
+                                      QLocale().toString(qMax(0.0, croppedHeight * factor), 'f', 2),
+                                      unit));
+    }
+
+    QSizeF m_pageSizePoints;
+    QMarginsF m_selectionMargins;
+    QMarginsF m_marginsPoints;
+    CropPreviewWidget *m_preview;
+    QLabel *m_sizeLabel;
+    QComboBox *m_unitsCombo;
+    std::array<QDoubleSpinBox *, 4> m_marginSpinBoxes = {};
+    QRadioButton *m_allPagesRadio;
+    QRadioButton *m_rangeRadio;
+    QSpinBox *m_fromPageSpinBox;
+    QSpinBox *m_toPageSpinBox;
+    QComboBox *m_subsetCombo;
+    QPushButton *m_applyButton = nullptr;
+    int m_unitIndex = 0;
+};
+
+class PdfPageLabel final : public QLabel
+{
+public:
+    explicit PdfPageLabel(QWidget *parent)
+        : QLabel(parent)
+    {
+    }
+
+    void setPageSelected(bool selected)
+    {
+        if (m_pageSelected == selected)
+            return;
+        m_pageSelected = selected;
+        update();
+    }
+
+    void setRegionSelection(const QRectF &normalizedRegion)
+    {
+        if (m_regionSelection == normalizedRegion)
+            return;
+        m_regionSelection = normalizedRegion;
+        update();
+    }
+
+protected:
+    void paintEvent(QPaintEvent *event) override
+    {
+        QLabel::paintEvent(event);
+
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing);
+        const QColor accent(QStringLiteral("#2684ff"));
+
+        if (m_pageSelected) {
+            painter.setPen(QPen(accent, 3));
+            painter.setBrush(QColor(38, 132, 255, 24));
+            painter.drawRect(rect().adjusted(2, 2, -2, -2));
+        }
+
+        if (!m_regionSelection.isEmpty()) {
+            const QRectF selection(m_regionSelection.x() * width(),
+                                   m_regionSelection.y() * height(),
+                                   m_regionSelection.width() * width(),
+                                   m_regionSelection.height() * height());
+            QPainterPath outside;
+            outside.addRect(QRectF(rect()));
+            QPainterPath inside;
+            inside.addRect(selection);
+            painter.fillPath(outside.subtracted(inside), QColor(0, 0, 0, 70));
+            painter.setPen(QPen(accent, 2));
+            painter.setBrush(Qt::NoBrush);
+            painter.drawRect(selection);
+
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(accent);
+            constexpr qreal handleSize = 7.0;
+            const QList<QPointF> handles = {
+                selection.topLeft(), selection.topRight(),
+                selection.bottomLeft(), selection.bottomRight(),
+            };
+            for (const QPointF &point : handles) {
+                painter.drawRect(QRectF(point.x() - handleSize / 2,
+                                        point.y() - handleSize / 2,
+                                        handleSize, handleSize));
+            }
+        }
+    }
+
+private:
+    bool m_pageSelected = false;
+    QRectF m_regionSelection;
+};
 }
 
 PdfViewerWidget::PdfViewerWidget(const QString &filePath, int pageRenderWidth,
@@ -162,6 +608,41 @@ void PdfViewerWidget::buildToolbar()
     layout()->addWidget(toolbar);
 
     const QColor iconColor = palette().color(QPalette::Text);
+
+    auto *selectionGroup = new QButtonGroup(toolbar);
+    selectionGroup->setExclusive(true);
+
+    m_selectPageButton = new QToolButton(toolbar);
+    m_selectPageButton->setCheckable(true);
+    m_selectPageButton->setChecked(true);
+    m_selectPageButton->setIcon(selectionModeIcon(true, iconColor));
+    m_selectPageButton->setText(tr("Select Page"));
+    m_selectPageButton->setToolTip(tr("Select pages"));
+    m_selectPageButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    selectionGroup->addButton(m_selectPageButton);
+    toolbar->addWidget(m_selectPageButton);
+
+    m_selectRegionButton = new QToolButton(toolbar);
+    m_selectRegionButton->setCheckable(true);
+    m_selectRegionButton->setIcon(selectionModeIcon(false, iconColor));
+    m_selectRegionButton->setText(tr("Select Region"));
+    m_selectRegionButton->setToolTip(tr("Select a rectangular region"));
+    m_selectRegionButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    selectionGroup->addButton(m_selectRegionButton);
+    toolbar->addWidget(m_selectRegionButton);
+
+    m_pageSelectionCombo = new QComboBox(toolbar);
+    m_pageSelectionCombo->setFixedWidth(110);
+    m_pageSelectionCombo->setPlaceholderText(tr("Select"));
+    m_pageSelectionCombo->addItem(tr("All"));
+    m_pageSelectionCombo->addItem(tr("None"));
+    m_pageSelectionCombo->addItem(tr("Even"));
+    m_pageSelectionCombo->addItem(tr("Odd"));
+    m_pageSelectionCombo->setCurrentIndex(-1);
+    m_pageSelectionCombo->setEnabled(false);
+    toolbar->addWidget(m_pageSelectionCombo);
+
+    toolbar->addSeparator();
 
     m_previousPageButton = new QToolButton(toolbar);
     m_previousPageButton->setIcon(style()->standardIcon(QStyle::SP_ArrowLeft));
@@ -249,6 +730,13 @@ void PdfViewerWidget::buildToolbar()
     m_pageSpinBox->setEnabled(false);
     m_nextPageButton->setEnabled(false);
 
+    connect(m_selectPageButton, &QToolButton::clicked, this,
+            [this]() { setSelectionMode(SelectionMode::Page); });
+    connect(m_selectRegionButton, &QToolButton::clicked, this,
+            [this]() { setSelectionMode(SelectionMode::Region); });
+    connect(m_pageSelectionCombo, &QComboBox::activated,
+            this, &PdfViewerWidget::applyPageSelectionCommand);
+
     connect(m_previousPageButton, &QToolButton::clicked, this,
             [this]() { navigateByPageGroup(-1); });
     connect(m_nextPageButton, &QToolButton::clicked, this,
@@ -279,10 +767,47 @@ void PdfViewerWidget::buildToolbar()
         applyZoom();
     });
 
-    m_zoomMode = ZoomMode::FitWidth;
+    m_zoomMode = ZoomMode::FitPage;
+    setSelectionMode(SelectionMode::Page);
     syncViewControl();
     syncFitControl();
     syncZoomControl();
+
+    auto *editToolbar = new QToolBar(this);
+    editToolbar->setObjectName(QStringLiteral("editToolBar"));
+    editToolbar->setMovable(false);
+    editToolbar->setFloatable(false);
+    editToolbar->setIconSize(QSize(28, 24));
+    layout()->addWidget(editToolbar);
+
+    m_cropButton = new QToolButton(editToolbar);
+    m_cropButton->setObjectName(QStringLiteral("cropButton"));
+    m_cropButton->setIcon(cropToolIcon(iconColor));
+    m_cropButton->setToolTip(tr("Crop"));
+    editToolbar->addWidget(m_cropButton);
+
+    editToolbar->addSeparator();
+
+    m_rotateCounterclockwiseButton = new QToolButton(editToolbar);
+    m_rotateCounterclockwiseButton->setObjectName(
+        QStringLiteral("rotateCounterclockwiseButton"));
+    m_rotateCounterclockwiseButton->setIcon(rotationToolIcon(false, iconColor));
+    m_rotateCounterclockwiseButton->setToolTip(tr("Rotate Counterclockwise"));
+    editToolbar->addWidget(m_rotateCounterclockwiseButton);
+
+    m_rotateClockwiseButton = new QToolButton(editToolbar);
+    m_rotateClockwiseButton->setObjectName(QStringLiteral("rotateClockwiseButton"));
+    m_rotateClockwiseButton->setIcon(rotationToolIcon(true, iconColor));
+    m_rotateClockwiseButton->setToolTip(tr("Rotate Clockwise"));
+    editToolbar->addWidget(m_rotateClockwiseButton);
+
+    connect(m_cropButton, &QToolButton::clicked,
+            this, &PdfViewerWidget::cropSelectedRegion);
+    connect(m_rotateCounterclockwiseButton, &QToolButton::clicked, this,
+            [this]() { rotateSelectedPages(false); });
+    connect(m_rotateClockwiseButton, &QToolButton::clicked, this,
+            [this]() { rotateSelectedPages(true); });
+    syncEditControls();
 }
 
 void PdfViewerWidget::startLoading()
@@ -344,7 +869,11 @@ void PdfViewerWidget::onDocumentLoaded(bool valid,
         m_pageSpinBox->setRange(1, pageSizes.size());
         m_pageSpinBox->setEnabled(true);
         m_pageCountLabel->setText(QStringLiteral("/ %1").arg(pageSizes.size()));
+        m_pageSelectionCombo->setEnabled(true);
     }
+    m_selectedPages.insert(0);
+    m_pageSelectionAnchor = 0;
+    setSelectionMode(m_selectionMode);
     syncNavigationControls();
 
     QTimer::singleShot(0, this, &PdfViewerWidget::renderVisiblePages);
@@ -357,10 +886,12 @@ void PdfViewerWidget::buildPageLabels(int pageCount)
     m_renderedWidths.fill(0, pageCount);
 
     for (int i = 0; i < pageCount; ++i) {
-        auto *label = new QLabel(m_pagesContainer);
+        auto *label = new PdfPageLabel(m_pagesContainer);
+        label->setProperty("pdfPageIndex", i);
         label->setFrameShape(QFrame::NoFrame);
         label->setStyleSheet(QStringLiteral("background-color: palette(base); border: none;"));
         label->setAlignment(Qt::AlignCenter);
+        label->installEventFilter(this);
         label->hide();
         m_pageLabels.append(label);
     }
@@ -689,6 +1220,316 @@ void PdfViewerWidget::syncFitControl()
     }
 }
 
+void PdfViewerWidget::setSelectionMode(SelectionMode mode)
+{
+    const bool modeChanged = m_selectionMode != mode;
+    m_selectionMode = mode;
+
+    if (m_selectPageButton)
+        m_selectPageButton->setChecked(mode == SelectionMode::Page);
+    if (m_selectRegionButton)
+        m_selectRegionButton->setChecked(mode == SelectionMode::Region);
+    if (m_pageSelectionCombo)
+        m_pageSelectionCombo->setVisible(mode == SelectionMode::Page);
+
+    if (modeChanged && mode == SelectionMode::Page && m_selectedPages.isEmpty()
+        && m_currentPageIndex >= 0) {
+        m_selectedPages.insert(m_currentPageIndex);
+        m_pageSelectionAnchor = m_currentPageIndex;
+    }
+
+    for (QLabel *label : m_pageLabels) {
+        label->setCursor(mode == SelectionMode::Region
+                             ? Qt::CrossCursor
+                             : Qt::PointingHandCursor);
+    }
+    updateSelectionOverlays();
+}
+
+void PdfViewerWidget::applyPageSelectionCommand(int commandIndex)
+{
+    m_selectedPages.clear();
+    for (int pageIndex = 0; pageIndex < m_pageLabels.size(); ++pageIndex) {
+        const int pageNumber = pageIndex + 1;
+        const bool selected = commandIndex == 0
+                              || (commandIndex == 2 && pageNumber % 2 == 0)
+                              || (commandIndex == 3 && pageNumber % 2 != 0);
+        if (selected)
+            m_selectedPages.insert(pageIndex);
+    }
+
+    m_pageSelectionAnchor = m_selectedPages.contains(m_currentPageIndex)
+                                ? m_currentPageIndex
+                                : -1;
+    updateSelectionOverlays();
+
+    const QSignalBlocker blocker(m_pageSelectionCombo);
+    m_pageSelectionCombo->setCurrentIndex(-1);
+}
+
+void PdfViewerWidget::updateSelectionOverlays()
+{
+    for (int pageIndex = 0; pageIndex < m_pageLabels.size(); ++pageIndex) {
+        auto *label = static_cast<PdfPageLabel *>(m_pageLabels[pageIndex]);
+        label->setPageSelected(m_selectionMode == SelectionMode::Page
+                               && m_selectedPages.contains(pageIndex));
+        label->setRegionSelection(m_selectionMode == SelectionMode::Region
+                                          && pageIndex == m_regionPageIndex
+                                      ? m_regionSelection
+                                      : QRectF());
+    }
+    syncEditControls();
+}
+
+void PdfViewerWidget::syncEditControls()
+{
+    const bool canRotate = m_valid && !m_transformInProgress
+                           && m_selectionMode == SelectionMode::Page
+                           && !m_selectedPages.isEmpty();
+    const bool canCrop = m_valid && !m_transformInProgress
+                         && m_selectionMode == SelectionMode::Region
+                         && m_regionPageIndex >= 0 && !m_regionSelection.isEmpty();
+    if (m_rotateCounterclockwiseButton)
+        m_rotateCounterclockwiseButton->setEnabled(canRotate);
+    if (m_rotateClockwiseButton)
+        m_rotateClockwiseButton->setEnabled(canRotate);
+    if (m_cropButton)
+        m_cropButton->setEnabled(canCrop);
+}
+
+void PdfViewerWidget::rotateSelectedPages(bool clockwise)
+{
+    if (!m_valid || m_transformInProgress || m_selectedPages.isEmpty())
+        return;
+
+    QVector<int> affectedPages;
+    affectedPages.reserve(m_selectedPages.size());
+    for (const int pageIndex : m_selectedPages)
+        affectedPages.append(pageIndex);
+    std::sort(affectedPages.begin(), affectedPages.end());
+
+    m_transformInProgress = true;
+    if (!m_modified) {
+        m_modified = true;
+        emit modifiedChanged(true);
+    }
+    emit operationInProgressChanged(true);
+    ++m_documentRevision;
+    m_pagesLoading.clear();
+    syncEditControls();
+
+    const std::shared_ptr<PdfDocument> document = m_document;
+    const QPointer<PdfViewerWidget> weakSelf(this);
+    const QString historyDescription = clockwise
+                                           ? tr("Rotate pages clockwise")
+                                           : tr("Rotate pages counterclockwise");
+    QThread *thread = QThread::create(
+        [weakSelf, document, affectedPages, clockwise, historyDescription]() {
+            const bool success = document->rotatePages(affectedPages, clockwise);
+            const QVector<QSizeF> pageSizes = success ? document->allPageSizes()
+                                                      : QVector<QSizeF>();
+            QMetaObject::invokeMethod(
+                qApp,
+                [weakSelf, success, pageSizes, affectedPages, historyDescription]() {
+                    if (weakSelf) {
+                        weakSelf->finishDocumentTransform(
+                            success, pageSizes, affectedPages, /*clearRegion=*/false,
+                            historyDescription);
+                    }
+                },
+                Qt::QueuedConnection);
+        });
+    connect(thread, &QThread::finished, thread, &QThread::deleteLater);
+    thread->start();
+}
+
+void PdfViewerWidget::cropSelectedRegion()
+{
+    if (!m_valid || m_transformInProgress || m_regionPageIndex < 0
+        || m_regionSelection.isEmpty()) {
+        return;
+    }
+
+    const int pageIndex = m_regionPageIndex;
+    const QRectF region = m_regionSelection;
+    const QSizeF sourceSize = pageSize(pageIndex);
+    const QMarginsF selectionMargins(region.left() * sourceSize.width(),
+                                     region.top() * sourceSize.height(),
+                                     (1.0 - region.right()) * sourceSize.width(),
+                                     (1.0 - region.bottom()) * sourceSize.height());
+    CropPagesDialog dialog(m_pageLabels[pageIndex]->pixmap(), sourceSize,
+                           selectionMargins, pageIndex, m_pageLabels.size(), this);
+    if (dialog.exec() != QDialog::Accepted)
+        return;
+
+    const QVector<int> affectedPages = dialog.affectedPageIndexes();
+    const QMarginsF marginsPoints = dialog.marginsPoints();
+    if (affectedPages.isEmpty())
+        return;
+
+    m_transformInProgress = true;
+    if (!m_modified) {
+        m_modified = true;
+        emit modifiedChanged(true);
+    }
+    emit operationInProgressChanged(true);
+    ++m_documentRevision;
+    m_pagesLoading.clear();
+    syncEditControls();
+
+    const std::shared_ptr<PdfDocument> document = m_document;
+    const QPointer<PdfViewerWidget> weakSelf(this);
+    const QString historyDescription = tr("Crop pages");
+    QThread *thread = QThread::create(
+        [weakSelf, document, marginsPoints, affectedPages, historyDescription]() {
+        const bool success = document->cropPages(affectedPages, marginsPoints);
+        const QVector<QSizeF> pageSizes = success ? document->allPageSizes()
+                                                  : QVector<QSizeF>();
+        QMetaObject::invokeMethod(
+            qApp,
+            [weakSelf, success, pageSizes, affectedPages, historyDescription]() {
+                if (weakSelf) {
+                    weakSelf->finishDocumentTransform(
+                        success, pageSizes, affectedPages, /*clearRegion=*/true,
+                        historyDescription);
+                }
+            },
+            Qt::QueuedConnection);
+        });
+    connect(thread, &QThread::finished, thread, &QThread::deleteLater);
+    thread->start();
+}
+
+void PdfViewerWidget::finishDocumentTransform(bool success,
+                                              const QVector<QSizeF> &pageSizes,
+                                              const QVector<int> &affectedPages,
+                                              bool clearRegion,
+                                              const QString &historyDescription)
+{
+    m_transformInProgress = false;
+    emit operationInProgressChanged(false);
+    success = success && pageSizes.size() == m_pageLabels.size();
+
+    if (success) {
+        m_pageSizes = pageSizes;
+        for (const int pageIndex : affectedPages) {
+            if (pageIndex < 0 || pageIndex >= m_pageLabels.size())
+                continue;
+            m_pageLabels[pageIndex]->clear();
+            m_renderedWidths[pageIndex] = 0;
+        }
+        if (clearRegion) {
+            m_regionPageIndex = -1;
+            m_regionSelection = {};
+        }
+        recordHistoryEntry(historyDescription);
+        updateSelectionOverlays();
+        applyZoom();
+    } else {
+        updateModifiedState();
+        qWarning() << "Failed to transform PDF pages in memory:" << m_filePath;
+        syncEditControls();
+        QTimer::singleShot(0, this, &PdfViewerWidget::renderVisiblePages);
+    }
+}
+
+void PdfViewerWidget::recordHistoryEntry(const QString &description)
+{
+    if (m_historyPosition < m_editHistory.size()) {
+        if (m_savedHistoryPosition > m_historyPosition)
+            m_savedHistoryPosition = -1;
+        m_editHistory.resize(m_historyPosition);
+    }
+    m_editHistory.append(description);
+    m_historyPosition = m_editHistory.size();
+    updateModifiedState();
+}
+
+void PdfViewerWidget::updateModifiedState()
+{
+    const bool modified = m_historyPosition != m_savedHistoryPosition;
+    if (modified == m_modified)
+        return;
+    m_modified = modified;
+    emit modifiedChanged(modified);
+}
+
+void PdfViewerWidget::saveDocument(bool createTimestampedBackup, int backupVersionLimit)
+{
+    if (!m_valid || m_saveInProgress)
+        return;
+    if (m_transformInProgress) {
+        emit saveFinished(false, QStringLiteral("An edit is still in progress."));
+        return;
+    }
+    if (!m_modified) {
+        emit saveFinished(true, {});
+        return;
+    }
+
+    m_saveInProgress = true;
+    m_transformInProgress = true;
+    emit operationInProgressChanged(true);
+    ++m_documentRevision;
+    m_pagesLoading.clear();
+    syncEditControls();
+
+    const std::shared_ptr<PdfDocument> document = m_document;
+    const QString filePath = m_filePath;
+    const QPointer<PdfViewerWidget> weakSelf(this);
+    QThread *thread = QThread::create(
+        [weakSelf, document, filePath, createTimestampedBackup, backupVersionLimit]() {
+            QString errorMessage;
+            const bool success = document->saveSafely(
+                filePath, createTimestampedBackup, backupVersionLimit, &errorMessage);
+            QMetaObject::invokeMethod(
+                qApp,
+                [weakSelf, success, errorMessage]() {
+                    if (weakSelf)
+                        weakSelf->finishDocumentSave(success, errorMessage);
+                },
+                Qt::QueuedConnection);
+        });
+    connect(thread, &QThread::finished, thread, &QThread::deleteLater);
+    thread->start();
+}
+
+void PdfViewerWidget::finishDocumentSave(bool success, const QString &errorMessage)
+{
+    m_saveInProgress = false;
+    m_transformInProgress = false;
+    emit operationInProgressChanged(false);
+    if (success) {
+        m_savedHistoryPosition = m_historyPosition;
+        updateModifiedState();
+    }
+    syncEditControls();
+    QTimer::singleShot(0, this, &PdfViewerWidget::renderVisiblePages);
+    emit saveFinished(success, errorMessage);
+}
+
+void PdfViewerWidget::setCurrentPageFromPointer(int pageIndex)
+{
+    if (pageIndex < 0 || pageIndex >= m_pageLabels.size()
+        || pageIndex == m_currentPageIndex) {
+        return;
+    }
+
+    m_currentPageIndex = pageIndex;
+    syncNavigationControls();
+    emit currentPageChanged(pageIndex);
+}
+
+QPointF PdfViewerWidget::normalizedPagePosition(const QLabel *label,
+                                                const QPointF &position) const
+{
+    if (!label || label->width() <= 0 || label->height() <= 0)
+        return {};
+
+    return QPointF(qBound(0.0, position.x() / label->width(), 1.0),
+                   qBound(0.0, position.y() / label->height(), 1.0));
+}
+
 void PdfViewerWidget::navigateByPageGroup(int direction)
 {
     if (m_pageLabels.isEmpty() || direction == 0)
@@ -723,6 +1564,76 @@ void PdfViewerWidget::syncNavigationControls()
 
 bool PdfViewerWidget::eventFilter(QObject *watched, QEvent *event)
 {
+    const QVariant pageIndexProperty = watched->property("pdfPageIndex");
+    if (pageIndexProperty.isValid()) {
+        const int pageIndex = pageIndexProperty.toInt();
+        auto *label = static_cast<PdfPageLabel *>(watched);
+
+        if (event->type() == QEvent::MouseButtonPress) {
+            auto *mouseEvent = static_cast<QMouseEvent *>(event);
+            if (mouseEvent->button() != Qt::LeftButton)
+                return false;
+
+            setCurrentPageFromPointer(pageIndex);
+            if (m_selectionMode == SelectionMode::Page) {
+                const bool extendRange = mouseEvent->modifiers().testFlag(Qt::ShiftModifier);
+                const bool additive = mouseEvent->modifiers().testFlag(Qt::ControlModifier)
+                                      || mouseEvent->modifiers().testFlag(Qt::MetaModifier);
+
+                if (extendRange && m_pageSelectionAnchor >= 0) {
+                    if (!additive)
+                        m_selectedPages.clear();
+                    const int first = qMin(m_pageSelectionAnchor, pageIndex);
+                    const int last = qMax(m_pageSelectionAnchor, pageIndex);
+                    for (int index = first; index <= last; ++index)
+                        m_selectedPages.insert(index);
+                } else if (additive) {
+                    if (m_selectedPages.contains(pageIndex))
+                        m_selectedPages.remove(pageIndex);
+                    else
+                        m_selectedPages.insert(pageIndex);
+                    m_pageSelectionAnchor = pageIndex;
+                } else {
+                    m_selectedPages = {pageIndex};
+                    m_pageSelectionAnchor = pageIndex;
+                }
+                updateSelectionOverlays();
+            } else {
+                m_regionPageIndex = pageIndex;
+                m_regionDragStart = normalizedPagePosition(label, mouseEvent->position());
+                m_regionSelection = QRectF(m_regionDragStart, m_regionDragStart);
+                m_draggingRegion = true;
+                updateSelectionOverlays();
+            }
+            return true;
+        }
+
+        if (event->type() == QEvent::MouseMove && m_selectionMode == SelectionMode::Region
+            && m_draggingRegion && pageIndex == m_regionPageIndex) {
+            auto *mouseEvent = static_cast<QMouseEvent *>(event);
+            const QPointF current = normalizedPagePosition(label, mouseEvent->position());
+            m_regionSelection = QRectF(m_regionDragStart, current).normalized();
+            updateSelectionOverlays();
+            return true;
+        }
+
+        if (event->type() == QEvent::MouseButtonRelease
+            && m_selectionMode == SelectionMode::Region && m_draggingRegion
+            && pageIndex == m_regionPageIndex) {
+            auto *mouseEvent = static_cast<QMouseEvent *>(event);
+            const QPointF current = normalizedPagePosition(label, mouseEvent->position());
+            m_regionSelection = QRectF(m_regionDragStart, current).normalized();
+            m_draggingRegion = false;
+            if (m_regionSelection.width() * label->width() < 4
+                || m_regionSelection.height() * label->height() < 4) {
+                m_regionPageIndex = -1;
+                m_regionSelection = {};
+            }
+            updateSelectionOverlays();
+            return true;
+        }
+    }
+
     if (watched == m_scrollArea->viewport() && event->type() == QEvent::Wheel) {
         auto *wheelEvent = static_cast<QWheelEvent *>(event);
         if (wheelEvent->modifiers().testFlag(Qt::ControlModifier)) {
@@ -840,28 +1751,36 @@ void PdfViewerWidget::renderVisiblePages()
 
 void PdfViewerWidget::scheduleRender(int pageIndex, int widthPx)
 {
+    if (m_transformInProgress)
+        return;
     if (m_pagesLoading.value(pageIndex) == widthPx)
         return;
     m_pagesLoading.insert(pageIndex, widthPx);
 
     const std::shared_ptr<PdfDocument> document = m_document;
     const QPointer<PdfViewerWidget> weakSelf(this);
-    QThread *thread = QThread::create([weakSelf, document, pageIndex, widthPx]() {
+    const int documentRevision = m_documentRevision;
+    QThread *thread = QThread::create(
+        [weakSelf, document, pageIndex, widthPx, documentRevision]() {
         const QImage image = document->renderPage(pageIndex, widthPx);
         QMetaObject::invokeMethod(
             qApp,
-            [weakSelf, pageIndex, widthPx, image]() {
+            [weakSelf, pageIndex, widthPx, documentRevision, image]() {
                 if (weakSelf)
-                    weakSelf->onPageRendered(pageIndex, widthPx, image);
+                    weakSelf->onPageRendered(pageIndex, widthPx, documentRevision, image);
             },
             Qt::QueuedConnection);
-    });
+        });
     connect(thread, &QThread::finished, thread, &QThread::deleteLater);
     thread->start();
 }
 
-void PdfViewerWidget::onPageRendered(int pageIndex, int widthPx, const QImage &image)
+void PdfViewerWidget::onPageRendered(int pageIndex, int widthPx, int documentRevision,
+                                     const QImage &image)
 {
+    if (documentRevision != m_documentRevision)
+        return;
+
     if (m_pagesLoading.value(pageIndex) == widthPx)
         m_pagesLoading.remove(pageIndex);
 

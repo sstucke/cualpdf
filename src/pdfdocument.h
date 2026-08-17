@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QImage>
+#include <QMarginsF>
 #include <QSizeF>
 #include <QString>
 #include <QVector>
@@ -31,6 +32,13 @@ public:
 
     // Renders a page at the given width in pixels, preserving aspect ratio.
     QImage renderPage(int pageIndex, int targetWidthPx) const;
+
+    // Applies page-dictionary transformations to the loaded document. These
+    // changes live in memory until a save workflow persists the document.
+    bool rotatePages(const QVector<int> &pageIndexes, bool clockwise);
+    bool cropPages(const QVector<int> &pageIndexes, const QMarginsF &marginsPoints);
+    bool saveSafely(const QString &filePath, bool createTimestampedBackup,
+                    int backupVersionLimit, QString *errorMessage);
 
 private:
     void *m_document = nullptr; // FPDF_DOCUMENT

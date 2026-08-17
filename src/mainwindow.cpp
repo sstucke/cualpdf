@@ -5,19 +5,26 @@
 #include "pdfgriditemdelegate.h"
 #include "pdflistitemdelegate.h"
 #include "pdfviewerwidget.h"
+#include "preferencesdialog.h"
+#include "tipsdialog.h"
 
 #include <QActionGroup>
+#include <QAbstractButton>
 #include <QCoreApplication>
+#include <QCloseEvent>
 #include <QDateTime>
 #include <QDesktopServices>
 #include <QDir>
+#include <QEventLoop>
 #include <QFileDialog>
 #include <QFileIconProvider>
 #include <QFileInfo>
 #include <QFileSystemModel>
+#include <QFileSystemWatcher>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QItemSelection>
+#include <QKeySequence>
 #include <QLabel>
 #include <QLayoutItem>
 #include <QListWidget>
@@ -26,6 +33,10 @@
 #include <QMessageBox>
 #include <QPainter>
 #include <QPalette>
+#include <QProcess>
+#include <QProgressDialog>
+#include <QPushButton>
+#include <QScrollBar>
 #include <QSignalBlocker>
 #include <QSlider>
 #include <QStandardPaths>
@@ -33,6 +44,7 @@
 #include <QStyledItemDelegate>
 #include <QTabBar>
 #include <QToolButton>
+#include <QTimer>
 #include <QUrl>
 
 namespace {
@@ -103,8 +115,12 @@ MainWindow::MainWindow(QWidget *parent)
     , contentModel(new FolderContentModel(this))
     , itemCountLabel(new QLabel(this))
     , zoomSlider(new QSlider(Qt::Horizontal, this))
+    , directoryWatcher(new QFileSystemWatcher(this))
+    , directoryRefreshTimer(new QTimer(this))
 {
     ui->setupUi(this);
+    // Qt replaces [*] with the platform's native modified-document marker.
+    setWindowTitle(windowTitle() + QStringLiteral("[*]"));
 
     treeModel->setRootPath(QString());
     treeModel->setFilter(QDir::AllDirs | QDir::NoDotAndDotDot);
@@ -122,6 +138,15 @@ MainWindow::MainWindow(QWidget *parent)
         ui->folderTreeView->hideColumn(column);
 
     ui->folderContentView->setModel(contentModel);
+    directoryRefreshTimer->setSingleShot(true);
+    directoryRefreshTimer->setInterval(250);
+    connect(directoryRefreshTimer, &QTimer::timeout,
+            this, &MainWindow::refreshFolderContentsPreservingSelection);
+    connect(directoryWatcher, &QFileSystemWatcher::directoryChanged,
+            this, [this](const QString &path) {
+                if (QDir::cleanPath(path) == QDir::cleanPath(currentFolderPath))
+                    scheduleFolderRefresh();
+            });
     defaultContentDelegate = new QStyledItemDelegate(ui->folderContentView);
     detailsContentDelegate = new PdfListItemDelegate(ui->folderContentView);
     gridContentDelegate = new PdfGridItemDelegate(ui->folderContentView);
@@ -190,6 +215,22 @@ MainWindow::MainWindow(QWidget *parent)
     connect(ui->actionZoomOut, &QAction::triggered, this, &MainWindow::zoomOut);
     connect(ui->actionResetZoom, &QAction::triggered, this, &MainWindow::resetZoom);
     connect(ui->actionAbout, &QAction::triggered, this, &MainWindow::showAboutDialog);
+
+    m_saveAction = new QAction(tr("Save"), this);
+    m_saveAction->setShortcut(QKeySequence::Save);
+    m_saveAction->setEnabled(false);
+    ui->menuFile->insertAction(ui->menuRecent->menuAction(), m_saveAction);
+    connect(m_saveAction, &QAction::triggered, this, &MainWindow::saveCurrentDocument);
+
+    auto *preferencesAction = new QAction(tr("Preferences…"), this);
+    preferencesAction->setMenuRole(QAction::PreferencesRole);
+    ui->menuFile->insertAction(ui->actionExit, preferencesAction);
+    connect(preferencesAction, &QAction::triggered, this, &MainWindow::showPreferences);
+
+    auto *tipsAction = new QAction(tr("Tips…"), this);
+    ui->menuHelp->insertAction(ui->actionAbout, tipsAction);
+    ui->menuHelp->insertSeparator(ui->actionAbout);
+    connect(tipsAction, &QAction::triggered, this, &MainWindow::showTips);
     connect(zoomSlider, &QSlider::valueChanged, this, &MainWindow::onZoomSliderChanged);
     connect(pageZoomSlider, &QSlider::valueChanged, this, [this](int percent) {
         if (auto *viewer = qobject_cast<PdfViewerWidget *>(ui->tabWidget->currentWidget()))
@@ -197,6 +238,7 @@ MainWindow::MainWindow(QWidget *parent)
     });
 
     setupViewModeMenu();
+    setupSortMenu();
     applyContentViewMode(appSettings.contentViewMode());
 
     recentFiles = appSettings.recentFiles();
@@ -209,11 +251,26 @@ MainWindow::MainWindow(QWidget *parent)
     clearDetailsPanel();
     setCurrentFolder(QStandardPaths::writableLocation(QStandardPaths::HomeLocation));
     updateStatusBarForCurrentTab();
+
+    if (appSettings.showTipsAtStartup())
+        QTimer::singleShot(0, this, &MainWindow::showTips);
 }
 
 MainWindow::~MainWindow()
 {
     delete ui;
+}
+
+void MainWindow::closeEvent(QCloseEvent *event)
+{
+    for (int index = ui->tabWidget->count() - 1; index > 0; --index) {
+        auto *viewer = qobject_cast<PdfViewerWidget *>(ui->tabWidget->widget(index));
+        if (viewer && !confirmCloseViewer(viewer)) {
+            event->ignore();
+            return;
+        }
+    }
+    event->accept();
 }
 
 void MainWindow::openFolder()
@@ -232,7 +289,64 @@ void MainWindow::goToParentFolder()
 
 void MainWindow::refreshCurrentFolder()
 {
-    setCurrentFolder(currentFolderPath);
+    refreshFolderContentsPreservingSelection();
+}
+
+void MainWindow::scheduleFolderRefresh()
+{
+    directoryRefreshTimer->start();
+}
+
+void MainWindow::refreshFolderContentsPreservingSelection()
+{
+    if (currentFolderPath.isEmpty() || !QDir(currentFolderPath).exists())
+        return;
+
+    QStringList selectedPaths;
+    const QModelIndexList selectedIndexes =
+        ui->folderContentView->selectionModel()->selectedIndexes();
+    selectedPaths.reserve(selectedIndexes.size());
+    for (const QModelIndex &index : selectedIndexes) {
+        selectedPaths.append(
+            contentModel->data(index, FolderContentModel::FilePathRole).toString());
+    }
+    const int scrollPosition = ui->folderContentView->verticalScrollBar()->value();
+
+    contentModel->setDirectory(currentFolderPath);
+    updateStatusBarItemCount();
+
+    QModelIndex firstRestoredIndex;
+    for (int row = 0; row < contentModel->rowCount(); ++row) {
+        const QModelIndex index = contentModel->index(row, 0);
+        const QString path =
+            contentModel->data(index, FolderContentModel::FilePathRole).toString();
+        if (!selectedPaths.contains(path))
+            continue;
+        ui->folderContentView->selectionModel()->select(
+            index, QItemSelectionModel::Select | QItemSelectionModel::Rows);
+        if (!firstRestoredIndex.isValid())
+            firstRestoredIndex = index;
+    }
+
+    if (firstRestoredIndex.isValid()) {
+        ui->folderContentView->selectionModel()->setCurrentIndex(
+            firstRestoredIndex, QItemSelectionModel::NoUpdate);
+        ui->folderContentView->scrollTo(firstRestoredIndex);
+    } else {
+        clearDetailsPanel();
+        QTimer::singleShot(0, this, [this, scrollPosition]() {
+            ui->folderContentView->verticalScrollBar()->setValue(scrollPosition);
+        });
+    }
+}
+
+void MainWindow::updateFolderWatch(const QString &path)
+{
+    const QStringList watchedDirectories = directoryWatcher->directories();
+    if (!watchedDirectories.isEmpty())
+        directoryWatcher->removePaths(watchedDirectories);
+    if (!path.isEmpty() && QDir(path).exists() && !directoryWatcher->addPath(path))
+        qWarning() << "Could not watch directory for external changes:" << path;
 }
 
 void MainWindow::onTreeCurrentChanged(const QModelIndex &current)
@@ -284,6 +398,7 @@ void MainWindow::onContentContextMenuRequested(const QPoint &pos)
     QMenu menu(this);
     QAction *openAction = menu.addAction(tr("Open"));
     QAction *openWithAction = isDir ? nullptr : menu.addAction(tr("Open with system default"));
+    QAction *findInExplorerAction = menu.addAction(tr("Find in File Explorer"));
 
     QAction *chosen = menu.exec(ui->folderContentView->viewport()->mapToGlobal(pos));
     if (chosen == openAction) {
@@ -293,6 +408,8 @@ void MainWindow::onContentContextMenuRequested(const QPoint &pos)
             openPdfViewerTab(path);
     } else if (chosen && chosen == openWithAction) {
         openWithSystemDefault(path);
+    } else if (chosen == findInExplorerAction) {
+        findInFileExplorer(path);
     }
 }
 
@@ -370,6 +487,52 @@ void MainWindow::setupViewModeMenu()
     ui->menuView->insertSeparator(ui->actionZoomIn);
 }
 
+void MainWindow::setupSortMenu()
+{
+    auto *sortButton = new QToolButton(this);
+    sortButton->setObjectName(QStringLiteral("sortButton"));
+    sortButton->setText(tr("Sort"));
+    sortButton->setPopupMode(QToolButton::InstantPopup);
+    sortButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
+
+    auto *sortMenu = new QMenu(sortButton);
+    sortActionGroup = new QActionGroup(this);
+    sortActionGroup->setExclusive(true);
+
+    const QList<QPair<FolderContentModel::SortMode, QString>> modes = {
+        {FolderContentModel::SortMode::NameAscending, tr("Name ↑")},
+        {FolderContentModel::SortMode::NameDescending, tr("Name ↓")},
+        {FolderContentModel::SortMode::SizeAscending, tr("Size ↑")},
+        {FolderContentModel::SortMode::SizeDescending, tr("Size ↓")},
+        {FolderContentModel::SortMode::DateAscending, tr("Date ↑")},
+        {FolderContentModel::SortMode::DateDescending, tr("Date ↓")},
+    };
+
+    for (const auto &[mode, label] : modes) {
+        QAction *action = sortMenu->addAction(label);
+        action->setCheckable(true);
+        action->setData(static_cast<int>(mode));
+        sortActionGroup->addAction(action);
+        connect(action, &QAction::triggered, this,
+                [this, mode]() { contentModel->setSortMode(mode); });
+    }
+
+    sortActionGroup->actions().first()->setChecked(true);
+    sortMenu->addSeparator();
+    QAction *foldersFirstAction = sortMenu->addAction(tr("Show Folders First"));
+    foldersFirstAction->setCheckable(true);
+    foldersFirstAction->setChecked(true);
+    connect(foldersFirstAction, &QAction::toggled,
+            contentModel, &FolderContentModel::setFoldersFirst);
+
+    sortButton->setMenu(sortMenu);
+    ui->mainToolBar->addWidget(sortButton);
+
+    auto *menuBarSortMenu = new QMenu(tr("&Sort"), ui->menubar);
+    menuBarSortMenu->addActions(sortActionGroup->actions());
+    ui->menubar->insertMenu(ui->menuHelp->menuAction(), menuBarSortMenu);
+}
+
 void MainWindow::applyContentViewMode(AppSettings::ContentViewMode mode)
 {
     switch (mode) {
@@ -436,6 +599,8 @@ void MainWindow::updateStatusBarForCurrentTab()
     ui->actionZoomIn->setEnabled(showingExplorer);
     ui->actionZoomOut->setEnabled(showingExplorer);
     ui->actionResetZoom->setEnabled(showingExplorer);
+    m_saveAction->setEnabled(viewer && viewer->isModified()
+                             && !viewer->isOperationInProgress());
 
     if (viewer) {
         const QSignalBlocker blocker(pageZoomSlider);
@@ -450,13 +615,65 @@ void MainWindow::showAboutDialog()
                             .arg(QCoreApplication::applicationName(), QCoreApplication::applicationVersion()));
 }
 
+void MainWindow::showPreferences()
+{
+    PreferencesDialog dialog(appSettings, this);
+    if (dialog.exec() == QDialog::Accepted && m_tipsDialog) {
+        m_tipsDialog->setShowAtStartup(appSettings.showTipsAtStartup());
+        m_tipsDialog->setAutoCloseEnabled(appSettings.autoCloseTips());
+    }
+}
+
+void MainWindow::showTips()
+{
+    if (m_tipsDialog) {
+        m_tipsDialog->raise();
+        m_tipsDialog->activateWindow();
+        return;
+    }
+
+    m_tipsDialog = new TipsDialog(appSettings.showTipsAtStartup(),
+                                  appSettings.autoCloseTips(), this);
+    m_tipsDialog->setAttribute(Qt::WA_DeleteOnClose);
+    connect(m_tipsDialog, &TipsDialog::showAtStartupChanged, this,
+            [this](bool enabled) { appSettings.setShowTipsAtStartup(enabled); });
+    connect(m_tipsDialog, &QObject::destroyed, this,
+            [this]() { m_tipsDialog = nullptr; });
+    m_tipsDialog->show();
+}
+
+void MainWindow::saveCurrentDocument()
+{
+    if (auto *viewer = qobject_cast<PdfViewerWidget *>(ui->tabWidget->currentWidget()))
+        saveViewer(viewer);
+}
+
 void MainWindow::onTabCloseRequested(int index)
 {
-    if (index == 0) // The Explorer tab is permanent.
+    requestClosePdfTab(index);
+}
+
+bool MainWindow::requestClosePdfTab(int index)
+{
+    if (index <= 0 || index >= ui->tabWidget->count()) // Explorer is permanent.
+        return false;
+
+    auto *viewer = qobject_cast<PdfViewerWidget *>(ui->tabWidget->widget(index));
+    if (viewer && !confirmCloseViewer(viewer))
+        return false;
+
+    closePdfTabWithoutPrompt(index);
+    return true;
+}
+
+void MainWindow::closePdfTabWithoutPrompt(int index)
+{
+    if (index <= 0 || index >= ui->tabWidget->count())
         return;
 
     QWidget *widget = ui->tabWidget->widget(index);
     ui->tabWidget->removeTab(index);
+    updatePdfTabTitle(qobject_cast<PdfViewerWidget *>(widget));
     widget->deleteLater();
 }
 
@@ -478,11 +695,15 @@ void MainWindow::onTabContextMenuRequested(const QPoint &pos)
     if (chosen == closeAction) {
         onTabCloseRequested(tabIndex);
     } else if (chosen == closeOthersAction) {
+        QWidget *keptWidget = ui->tabWidget->widget(tabIndex);
         for (int index = ui->tabWidget->count() - 1; index > 0; --index) {
-            if (index != tabIndex)
-                onTabCloseRequested(index);
+            if (ui->tabWidget->widget(index) != keptWidget
+                && !requestClosePdfTab(index)) {
+                break;
+            }
         }
-        ui->tabWidget->setCurrentIndex(1);
+        if (ui->tabWidget->indexOf(keptWidget) >= 0)
+            ui->tabWidget->setCurrentWidget(keptWidget);
     } else if (chosen == closeAllAction) {
         closePdfTabs();
     }
@@ -492,10 +713,101 @@ void MainWindow::closePdfTabs()
 {
     // Close from right to left so removing a tab never changes the index of
     // a tab that is still waiting to be closed. Index zero is Explorer.
-    for (int index = ui->tabWidget->count() - 1; index > 0; --index)
-        onTabCloseRequested(index);
+    for (int index = ui->tabWidget->count() - 1; index > 0; --index) {
+        if (!requestClosePdfTab(index))
+            return;
+    }
 
     ui->tabWidget->setCurrentIndex(0);
+}
+
+bool MainWindow::confirmCloseViewer(PdfViewerWidget *viewer)
+{
+    if (!viewer || !viewer->isModified())
+        return true;
+
+    ui->tabWidget->setCurrentWidget(viewer);
+    const QString fileName = QFileInfo(viewer->filePath()).fileName();
+    QMessageBox messageBox(QMessageBox::Warning, tr("Unsaved Changes"),
+                           tr("Save changes to \"%1\" before closing?").arg(fileName),
+                           QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel,
+                           this);
+    messageBox.setDefaultButton(QMessageBox::Save);
+    messageBox.setEscapeButton(QMessageBox::Cancel);
+    messageBox.button(QMessageBox::Save)->setText(tr("Save"));
+    messageBox.button(QMessageBox::Discard)->setText(tr("Discard"));
+    messageBox.button(QMessageBox::Cancel)->setText(tr("Cancel"));
+
+    const auto choice = static_cast<QMessageBox::StandardButton>(messageBox.exec());
+    if (choice == QMessageBox::Cancel)
+        return false;
+    if (choice == QMessageBox::Discard)
+        return true;
+    return choice == QMessageBox::Save && saveViewer(viewer);
+}
+
+bool MainWindow::saveViewer(PdfViewerWidget *viewer)
+{
+    if (!viewer || !viewer->isModified())
+        return true;
+
+    const QString fileName = QFileInfo(viewer->filePath()).fileName();
+    QProgressDialog progress(tr("Saving \"%1\"…").arg(fileName), QString(), 0, 0, this);
+    progress.setWindowTitle(tr("Saving PDF"));
+    progress.setCancelButton(nullptr);
+    progress.setWindowModality(Qt::WindowModal);
+    progress.setMinimumDuration(0);
+
+    bool success = false;
+    bool finished = false;
+    QString errorMessage;
+    QEventLoop eventLoop;
+    const QMetaObject::Connection connection = connect(
+        viewer, &PdfViewerWidget::saveFinished, &eventLoop,
+        [&eventLoop, &success, &finished, &errorMessage](bool saved, const QString &error) {
+            success = saved;
+            finished = true;
+            errorMessage = error;
+            eventLoop.quit();
+        });
+
+    viewer->saveDocument(appSettings.createTimestampedBackups(),
+                         appSettings.backupVersionLimit());
+    if (!finished)
+        eventLoop.exec();
+    disconnect(connection);
+
+    if (!success) {
+        qWarning() << "Could not save PDF:" << viewer->filePath() << errorMessage;
+        QMessageBox::critical(this, tr("Save Failed"),
+                              tr("Could not save \"%1\".").arg(fileName));
+    } else if (QDir::cleanPath(QFileInfo(viewer->filePath()).absolutePath())
+               == QDir::cleanPath(currentFolderPath)) {
+        scheduleFolderRefresh();
+    }
+    updateStatusBarForCurrentTab();
+    return success;
+}
+
+void MainWindow::updatePdfTabTitle(PdfViewerWidget *viewer)
+{
+    if (!viewer)
+        return;
+    const int index = ui->tabWidget->indexOf(viewer);
+    if (index >= 0) {
+        const QString suffix = viewer->isModified() ? QStringLiteral(" *") : QString();
+        ui->tabWidget->setTabText(index,
+                                  QFileInfo(viewer->filePath()).fileName() + suffix);
+    }
+
+    bool anyModified = false;
+    for (int tabIndex = 1; tabIndex < ui->tabWidget->count(); ++tabIndex) {
+        const auto *tabViewer = qobject_cast<PdfViewerWidget *>(
+            ui->tabWidget->widget(tabIndex));
+        anyModified = anyModified || (tabViewer && tabViewer->isModified());
+    }
+    setWindowModified(anyModified);
+    updateStatusBarForCurrentTab();
 }
 
 void MainWindow::setCurrentFolder(const QString &path)
@@ -506,6 +818,7 @@ void MainWindow::setCurrentFolder(const QString &path)
         return;
 
     currentFolderPath = path;
+    updateFolderWatch(path);
     ui->locationEdit->setText(path);
 
     const QModelIndex treeIndex = treeModel->index(path);
@@ -624,6 +937,13 @@ void MainWindow::openPdfViewerTab(const QString &filePath)
                 const QSignalBlocker blocker(pageZoomSlider);
                 pageZoomSlider->setValue(percent);
             });
+    connect(viewer, &PdfViewerWidget::modifiedChanged, this,
+            [this, viewer]() { updatePdfTabTitle(viewer); });
+    connect(viewer, &PdfViewerWidget::operationInProgressChanged, this,
+            [this, viewer]() {
+                if (ui->tabWidget->currentWidget() == viewer)
+                    updateStatusBarForCurrentTab();
+            });
 
     const int index = ui->tabWidget->addTab(viewer, QFileInfo(filePath).fileName());
     ui->tabWidget->setCurrentIndex(index);
@@ -634,6 +954,36 @@ void MainWindow::openWithSystemDefault(const QString &filePath)
     qInfo() << "Opening file with system default application:" << filePath;
 
     QDesktopServices::openUrl(QUrl::fromLocalFile(filePath));
+}
+
+void MainWindow::findInFileExplorer(const QString &path)
+{
+    const QFileInfo info(path);
+    if (!info.exists()) {
+        ui->statusbar->showMessage(
+            tr("Can't find \"%1\": it no longer exists.").arg(path), 4000);
+        return;
+    }
+
+    bool launched = false;
+#ifdef Q_OS_WIN
+    launched = QProcess::startDetached(
+        QStringLiteral("explorer.exe"),
+        {QStringLiteral("/select,"), QDir::toNativeSeparators(info.absoluteFilePath())});
+#elif defined(Q_OS_MACOS)
+    launched = QProcess::startDetached(
+        QStringLiteral("/usr/bin/open"),
+        {QStringLiteral("-R"), info.absoluteFilePath()});
+#else
+    // Qt has no cross-desktop API for selecting an item on Linux. Opening
+    // its containing folder is the portable fallback and respects the
+    // user's configured file manager or desktop portal.
+    const QString folderPath = info.isDir() ? info.absoluteFilePath() : info.absolutePath();
+    launched = QDesktopServices::openUrl(QUrl::fromLocalFile(folderPath));
+#endif
+
+    if (!launched)
+        ui->statusbar->showMessage(tr("Could not open the system file explorer."), 4000);
 }
 
 void MainWindow::addRecentFile(const QString &filePath)
@@ -663,12 +1013,17 @@ void MainWindow::onTreeContextMenuRequested(const QPoint &pos)
     const bool alreadyFavorite = m_favorites.contains(path);
 
     QMenu menu(this);
-    QAction *action = menu.addAction(alreadyFavorite ? tr("Unpin from Favorites") : tr("Pin to Favorites"));
-    if (menu.exec(ui->folderTreeView->viewport()->mapToGlobal(pos)) == action) {
+    QAction *favoriteAction =
+        menu.addAction(alreadyFavorite ? tr("Unpin from Favorites") : tr("Pin to Favorites"));
+    QAction *findInExplorerAction = menu.addAction(tr("Find in File Explorer"));
+    QAction *chosen = menu.exec(ui->folderTreeView->viewport()->mapToGlobal(pos));
+    if (chosen == favoriteAction) {
         if (alreadyFavorite)
             removeFavorite(path);
         else
             addFavorite(path);
+    } else if (chosen == findInExplorerAction) {
+        findInFileExplorer(path);
     }
 }
 

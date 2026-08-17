@@ -32,6 +32,66 @@
 <context>
     <name>MainWindow</name>
     <message>
+        <source>Preferences…</source>
+        <translation>Preferencias…</translation>
+    </message>
+    <message>
+        <source>Tips…</source>
+        <translation>Sugerencias…</translation>
+    </message>
+    <message>
+        <source>Sort</source>
+        <translation>Ordenar</translation>
+    </message>
+    <message>
+        <source>&amp;Sort</source>
+        <translation>&amp;Ordenar</translation>
+    </message>
+    <message>
+        <source>Name ↑</source>
+        <translation>Nombre ↑</translation>
+    </message>
+    <message>
+        <source>Name ↓</source>
+        <translation>Nombre ↓</translation>
+    </message>
+    <message>
+        <source>Size ↑</source>
+        <translation>Tamaño ↑</translation>
+    </message>
+    <message>
+        <source>Size ↓</source>
+        <translation>Tamaño ↓</translation>
+    </message>
+    <message>
+        <source>Date ↑</source>
+        <translation>Fecha ↑</translation>
+    </message>
+    <message>
+        <source>Date ↓</source>
+        <translation>Fecha ↓</translation>
+    </message>
+    <message>
+        <source>Show Folders First</source>
+        <translation>Mostrar carpetas primero</translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.cpp" line="289"/>
+        <location filename="../src/mainwindow.cpp" line="699"/>
+        <source>Find in File Explorer</source>
+        <translation>Encontrar en el explorador</translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.cpp" line="650"/>
+        <source>Can't find &quot;%1&quot;: it no longer exists.</source>
+        <translation>No se puede encontrar &quot;%1&quot;: ya no existe.</translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.cpp" line="676"/>
+        <source>Could not open the system file explorer.</source>
+        <translation>No se pudo abrir el explorador de archivos del sistema.</translation>
+    </message>
+    <message>
         <location filename="../src/mainwindow.cpp" line="375"/>
         <source>Close Tab</source>
         <translation>Cerrar pestaña</translation>
@@ -314,9 +374,189 @@ Un editor de PDF rápido, liviano y de código abierto.</translation>
         <source>Unpin from Favorites</source>
         <translation>Desanclar de Favoritos</translation>
     </message>
+    <message>
+        <source>Save</source>
+        <translation>Guardar</translation>
+    </message>
+    <message>
+        <source>Unsaved Changes</source>
+        <translation>Cambios sin guardar</translation>
+    </message>
+    <message>
+        <source>Save changes to &quot;%1&quot; before closing?</source>
+        <translation>¿Guardar los cambios de &quot;%1&quot; antes de cerrar?</translation>
+    </message>
+    <message>
+        <source>Discard</source>
+        <translation>Descartar</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>Cancelar</translation>
+    </message>
+    <message>
+        <source>Saving &quot;%1&quot;…</source>
+        <translation>Guardando &quot;%1&quot;…</translation>
+    </message>
+    <message>
+        <source>Saving PDF</source>
+        <translation>Guardando PDF</translation>
+    </message>
+    <message>
+        <source>Save Failed</source>
+        <translation>Error al guardar</translation>
+    </message>
+    <message>
+        <source>Could not save &quot;%1&quot;.</source>
+        <translation>No se pudo guardar &quot;%1&quot;.</translation>
+    </message>
 </context>
 <context>
     <name>PdfViewerWidget</name>
+    <message>
+        <source>Crop Box Margins</source>
+        <translation>Márgenes del recuadro de recorte</translation>
+    </message>
+    <message>
+        <source>Units:</source>
+        <translation>Unidades:</translation>
+    </message>
+    <message>
+        <source>Millimeters</source>
+        <translation>Milímetros</translation>
+    </message>
+    <message>
+        <source>Points</source>
+        <translation>Puntos</translation>
+    </message>
+    <message>
+        <source>Top:</source>
+        <translation>Superior:</translation>
+    </message>
+    <message>
+        <source>Bottom:</source>
+        <translation>Inferior:</translation>
+    </message>
+    <message>
+        <source>Left:</source>
+        <translation>Izquierdo:</translation>
+    </message>
+    <message>
+        <source>Right:</source>
+        <translation>Derecho:</translation>
+    </message>
+    <message>
+        <source>Set to Zero</source>
+        <translation>Establecer en cero</translation>
+    </message>
+    <message>
+        <source>Restore Selection</source>
+        <translation>Recuperar selección</translation>
+    </message>
+    <message>
+        <source>Cropped page size: %1 × %2 %3</source>
+        <translation>Tamaño de página recortada: %1 × %2 %3</translation>
+    </message>
+    <message>
+        <source>Page Range</source>
+        <translation>Rango de páginas</translation>
+    </message>
+    <message>
+        <source>Crop Pages</source>
+        <translation>Recortar páginas</translation>
+    </message>
+    <message>
+        <source>Apply crop to:</source>
+        <translation>Aplicar recorte a:</translation>
+    </message>
+    <message>
+        <source>Current page</source>
+        <translation>Página actual</translation>
+    </message>
+    <message>
+        <source>All pages</source>
+        <translation>Todas las páginas</translation>
+    </message>
+    <message>
+        <source>Page range</source>
+        <translation>Rango de páginas</translation>
+    </message>
+    <message>
+        <source>From:</source>
+        <translation>Desde:</translation>
+    </message>
+    <message>
+        <source>To:</source>
+        <translation>Hasta:</translation>
+    </message>
+    <message>
+        <source>Subset:</source>
+        <translation>Subconjunto:</translation>
+    </message>
+    <message>
+        <source>Even pages only</source>
+        <translation>Sólo páginas pares</translation>
+    </message>
+    <message>
+        <source>Odd pages only</source>
+        <translation>Sólo páginas impares</translation>
+    </message>
+    <message>
+        <source>Apply</source>
+        <translation>Aplicar</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>Cancelar</translation>
+    </message>
+    <message>
+        <source>Crop</source>
+        <translation>Recortar</translation>
+    </message>
+    <message>
+        <source>Rotate Counterclockwise</source>
+        <translation>Rotar en sentido antihorario</translation>
+    </message>
+    <message>
+        <source>Rotate Clockwise</source>
+        <translation>Rotar en sentido horario</translation>
+    </message>
+    <message>
+        <source>Select Page</source>
+        <translation>Seleccionar página</translation>
+    </message>
+    <message>
+        <source>Select pages</source>
+        <translation>Seleccionar páginas</translation>
+    </message>
+    <message>
+        <source>Select Region</source>
+        <translation>Seleccionar región</translation>
+    </message>
+    <message>
+        <source>Select a rectangular region</source>
+        <translation>Seleccionar una región rectangular</translation>
+    </message>
+    <message>
+        <source>Select</source>
+        <translation>Seleccionar</translation>
+    </message>
+    <message>
+        <source>All</source>
+        <translation>Todas</translation>
+    </message>
+    <message>
+        <source>None</source>
+        <translation>Ninguna</translation>
+    </message>
+    <message>
+        <source>Even</source>
+        <translation>Pares</translation>
+    </message>
+    <message>
+        <source>Odd</source>
+        <translation>Impares</translation>
+    </message>
     <message>
         <location filename="../src/pdfviewerwidget.cpp" line="90"/>
         <source>Previous Page</source>
@@ -372,6 +612,18 @@ Un editor de PDF rápido, liviano y de código abierto.</translation>
         <translation>Ajuste</translation>
     </message>
     <message>
+        <source>Rotate pages clockwise</source>
+        <translation>Rotar páginas en sentido horario</translation>
+    </message>
+    <message>
+        <source>Rotate pages counterclockwise</source>
+        <translation>Rotar páginas en sentido antihorario</translation>
+    </message>
+    <message>
+        <source>Crop pages</source>
+        <translation>Recortar páginas</translation>
+    </message>
+    <message>
         <location filename="../src/pdfviewerwidget.cpp" line="115"/>
         <source>Multiple Columns</source>
         <translation>Múltiples columnas</translation>
@@ -414,6 +666,151 @@ Un editor de PDF rápido, liviano y de código abierto.</translation>
         <location filename="../src/pdfviewerwidget.cpp" line="82"/>
         <source>Could not open this PDF file.</source>
         <translation>No se pudo abrir este archivo PDF.</translation>
+    </message>
+</context>
+<context>
+    <name>PreferencesDialog</name>
+    <message>
+        <source>Preferences</source>
+        <translation>Preferencias</translation>
+    </message>
+    <message>
+        <source>Search settings…</source>
+        <translation>Buscar configuraciones…</translation>
+    </message>
+    <message>
+        <source>Saving</source>
+        <translation>Guardado</translation>
+    </message>
+    <message>
+        <source>Tips</source>
+        <translation>Sugerencias</translation>
+    </message>
+    <message>
+        <source>Create a timestamped backup before overwriting a PDF</source>
+        <translation>Crear una copia de seguridad con fecha antes de sobrescribir un PDF</translation>
+    </message>
+    <message>
+        <source>The previous file will be retained with a date and time in its name.</source>
+        <translation>El archivo anterior se conservará con la fecha y hora en su nombre.</translation>
+    </message>
+    <message>
+        <source>Keep the latest</source>
+        <translation>Conservar las últimas</translation>
+    </message>
+    <message>
+        <source>backup versions per document</source>
+        <translation>versiones de copia de seguridad por documento</translation>
+    </message>
+    <message>
+        <source>Show tips at startup</source>
+        <translation>Mostrar sugerencias al iniciar</translation>
+    </message>
+    <message>
+        <source>Show a small, non-blocking window with a random suggestion.</source>
+        <translation>Mostrar una ventana pequeña y no bloqueante con una sugerencia al azar.</translation>
+    </message>
+    <message>
+        <source>Close tips automatically after 10 seconds</source>
+        <translation>Cerrar las sugerencias automáticamente después de 10 segundos</translation>
+    </message>
+    <message>
+        <source>The countdown pauses while the pointer is over the tip.</source>
+        <translation>La cuenta regresiva se pausa mientras el puntero está sobre la sugerencia.</translation>
+    </message>
+    <message>
+        <source>No settings match your search.</source>
+        <translation>Ninguna configuración coincide con la búsqueda.</translation>
+    </message>
+    <message>
+        <source>OK</source>
+        <translation>Aceptar</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>Cancelar</translation>
+    </message>
+    <message>
+        <source>timestamped backup overwrite previous file safe save</source>
+        <translation>copia de seguridad con fecha sobrescribir archivo anterior guardado seguro</translation>
+    </message>
+    <message>
+        <source>backup versions retention history limit</source>
+        <translation>versiones copias de seguridad retención historial límite</translation>
+    </message>
+    <message>
+        <source>tips suggestions startup launch</source>
+        <translation>sugerencias consejos inicio arranque</translation>
+    </message>
+    <message>
+        <source>tips automatic close timeout countdown</source>
+        <translation>sugerencias cierre automático tiempo cuenta regresiva</translation>
+    </message>
+</context>
+<context>
+    <name>TipsDialog</name>
+    <message>
+        <source>Tips</source>
+        <translation>Sugerencias</translation>
+    </message>
+    <message>
+        <source>Did you know?</source>
+        <translation>¿Sabías que?</translation>
+    </message>
+    <message>
+        <source>Show tips at startup</source>
+        <translation>Mostrar sugerencias al iniciar</translation>
+    </message>
+    <message>
+        <source>Next Tip</source>
+        <translation>Siguiente sugerencia</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>Cerrar</translation>
+    </message>
+    <message>
+        <source>No tips are available yet.</source>
+        <translation>Todavía no hay sugerencias disponibles.</translation>
+    </message>
+</context>
+<context>
+    <name>Tips</name>
+    <message>
+        <source>Use Ctrl or Command while clicking to select multiple PDF pages.</source>
+        <translation>Usá Ctrl o Command al hacer clic para seleccionar varias páginas PDF.</translation>
+    </message>
+    <message>
+        <source>Use Shift while clicking to select a continuous range of PDF pages.</source>
+        <translation>Usá Shift al hacer clic para seleccionar un rango continuo de páginas PDF.</translation>
+    </message>
+    <message>
+        <source>Switch to region selection to draw a crop area directly on a page.</source>
+        <translation>Cambiá a selección de región para dibujar un área de recorte directamente sobre una página.</translation>
+    </message>
+    <message>
+        <source>A crop region can be applied to the current page, every page, or a page range.</source>
+        <translation>Una región de recorte puede aplicarse a la página actual, a todas las páginas o a un rango.</translation>
+    </message>
+    <message>
+        <source>Hold Ctrl or Command and use the mouse wheel to zoom the PDF.</source>
+        <translation>Mantené presionado Ctrl o Command y usá la rueda del mouse para ampliar el PDF.</translation>
+    </message>
+    <message>
+        <source>Right-click a PDF or folder to reveal it in the system file explorer.</source>
+        <translation>Hacé clic derecho en un PDF o carpeta para mostrarlo en el explorador de archivos del sistema.</translation>
+    </message>
+    <message>
+        <source>Pin frequently used folders to Favorites from the folder tree.</source>
+        <translation>Anclá las carpetas más usadas a Favoritos desde el árbol de carpetas.</translation>
+    </message>
+    <message>
+        <source>Use the Sort menu to order files by name, size, or modification date.</source>
+        <translation>Usá el menú Ordenar para ordenar archivos por nombre, tamaño o fecha de modificación.</translation>
+    </message>
+    <message>
+        <source>Page rotation applies to every page currently selected.</source>
+        <translation>La rotación se aplica a todas las páginas seleccionadas actualmente.</translation>
     </message>
 </context>
 </TS>
