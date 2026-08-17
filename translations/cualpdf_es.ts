@@ -452,9 +452,257 @@ https://github.com/sstucke/cualpdf</translation>
         <source>Could not save &quot;%1&quot;.</source>
         <translation>No se pudo guardar &quot;%1&quot;.</translation>
     </message>
+    <message>
+        <source>&amp;Tools</source>
+        <translation>&amp;Herramientas</translation>
+    </message>
+    <message>
+        <source>Combine Files…</source>
+        <translation>Combinar archivos…</translation>
+    </message>
+</context>
+<context>
+    <name>MergePdfDialog</name>
+    <message>
+        <source>Drag and drop PDF files here, or use Add Files.</source>
+        <translation>Arrastrá y soltá archivos PDF aquí o usá Agregar archivos.</translation>
+    </message>
+    <message>
+        <source>Add Files…</source>
+        <translation>Agregar archivos…</translation>
+    </message>
+    <message>
+        <source>Remove</source>
+        <translation>Eliminar</translation>
+    </message>
+    <message>
+        <source>Clear</source>
+        <translation>Limpiar</translation>
+    </message>
+    <message>
+        <source>Move Up</source>
+        <translation>Subir</translation>
+    </message>
+    <message>
+        <source>Move Down</source>
+        <translation>Bajar</translation>
+    </message>
+    <message>
+        <source>Browse…</source>
+        <translation>Examinar…</translation>
+    </message>
+    <message>
+        <source>Combine</source>
+        <translation>Combinar</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>Cerrar</translation>
+    </message>
+    <message>
+        <source>Combine Files</source>
+        <translation>Combinar archivos</translation>
+    </message>
+    <message>
+        <source>File</source>
+        <translation>Archivo</translation>
+    </message>
+    <message>
+        <source>Pages</source>
+        <translation>Páginas</translation>
+    </message>
+    <message>
+        <source>Size</source>
+        <translation>Tamaño</translation>
+    </message>
+    <message>
+        <source>Modified</source>
+        <translation>Modificado</translation>
+    </message>
+    <message>
+        <source>Output file:</source>
+        <translation>Archivo de salida:</translation>
+    </message>
+    <message>
+        <source>Choose an output PDF file</source>
+        <translation>Elegí un archivo PDF de salida</translation>
+    </message>
+    <message>
+        <source>Add PDF Files</source>
+        <translation>Agregar archivos PDF</translation>
+    </message>
+    <message>
+        <source>PDF files (*.pdf)</source>
+        <translation>Archivos PDF (*.pdf)</translation>
+    </message>
+    <message>
+        <source>Loading…</source>
+        <translation>Cargando…</translation>
+    </message>
+    <message>
+        <source>Invalid</source>
+        <translation>No válido</translation>
+    </message>
+    <message>
+        <source>This file is not a readable PDF.</source>
+        <translation>Este archivo no es un PDF legible.</translation>
+    </message>
+    <message>
+        <source>Remove invalid files before combining.</source>
+        <translation>Eliminá los archivos no válidos antes de combinar.</translation>
+    </message>
+    <message>
+        <source>Choose Output PDF</source>
+        <translation>Elegir PDF de salida</translation>
+    </message>
+    <message>
+        <source>File Already Exists</source>
+        <translation>El archivo ya existe</translation>
+    </message>
+    <message>
+        <source>%1 already exists. Do you want to overwrite it?</source>
+        <translation>%1 ya existe. ¿Querés sobrescribirlo?</translation>
+    </message>
+    <message>
+        <source>Overwrite</source>
+        <translation>Sobrescribir</translation>
+    </message>
+    <message>
+        <source>Combining PDF files…</source>
+        <translation>Combinando archivos PDF…</translation>
+    </message>
+    <message>
+        <source>Combined PDF saved to %1</source>
+        <translation>PDF combinado guardado en %1</translation>
+    </message>
+    <message>
+        <source>Could not read %1 as a PDF.</source>
+        <translation>No se pudo leer %1 como PDF.</translation>
+    </message>
+    <message>
+        <source>Could not write %1.
+
+%2</source>
+        <translation>No se pudo escribir %1.
+
+%2</translation>
+    </message>
+    <message>
+        <source>The PDF files could not be combined.</source>
+        <translation>No se pudieron combinar los archivos PDF.</translation>
+    </message>
+    <message>
+        <source>PDF Is Open</source>
+        <translation>El PDF está abierto</translation>
+    </message>
+    <message>
+        <source>Close the PDF tab before overwriting this file:
+%1</source>
+        <translation>Cerrá la pestaña del PDF antes de sobrescribir este archivo:
+%1</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n page(s) total</source>
+        <translation>
+            <numerusform>%n página en total</numerusform>
+            <numerusform>%n páginas en total</numerusform>
+        </translation>
+    </message>
 </context>
 <context>
     <name>PdfViewerWidget</name>
+    <message>
+        <source>Insert pages here</source>
+        <translation>Insertar páginas aquí</translation>
+    </message>
+    <message>
+        <source>Organize Pages</source>
+        <translation>Reorganizar páginas</translation>
+    </message>
+    <message>
+        <source>Reorder, copy, and insert pages</source>
+        <translation>Reordenar, copiar e insertar páginas</translation>
+    </message>
+    <message>
+        <source>Cut</source>
+        <translation>Cortar</translation>
+    </message>
+    <message>
+        <source>Copy</source>
+        <translation>Copiar</translation>
+    </message>
+    <message>
+        <source>Extract PDF…</source>
+        <translation>Extraer PDF…</translation>
+    </message>
+    <message>
+        <source>Extract Pages</source>
+        <translation>Extraer páginas</translation>
+    </message>
+    <message>
+        <source>Choose a different file so the open PDF is not overwritten.</source>
+        <translation>Elegí otro archivo para no sobrescribir el PDF abierto.</translation>
+    </message>
+    <message>
+        <source>The selected pages could not be extracted.</source>
+        <translation>No se pudieron extraer las páginas seleccionadas.</translation>
+    </message>
+    <message>
+        <source>Add Blank Page</source>
+        <translation>Agregar página en blanco</translation>
+    </message>
+    <message>
+        <source>Paste</source>
+        <translation>Pegar</translation>
+    </message>
+    <message>
+        <source>Insert from PDF…</source>
+        <translation>Insertar desde PDF…</translation>
+    </message>
+    <message>
+        <source>Move pages</source>
+        <translation>Mover páginas</translation>
+    </message>
+    <message>
+        <source>Copy Pages</source>
+        <translation>Copiar páginas</translation>
+    </message>
+    <message>
+        <source>The selected pages could not be copied.</source>
+        <translation>No se pudieron copiar las páginas seleccionadas.</translation>
+    </message>
+    <message>
+        <source>Cut pages</source>
+        <translation>Cortar páginas</translation>
+    </message>
+    <message>
+        <source>The blank page could not be created.</source>
+        <translation>No se pudo crear la página en blanco.</translation>
+    </message>
+    <message>
+        <source>Add blank page</source>
+        <translation>Agregar página en blanco</translation>
+    </message>
+    <message>
+        <source>Paste pages</source>
+        <translation>Pegar páginas</translation>
+    </message>
+    <message>
+        <source>Insert from PDF</source>
+        <translation>Insertar desde PDF</translation>
+    </message>
+    <message>
+        <source>PDF files (*.pdf)</source>
+        <translation>Archivos PDF (*.pdf)</translation>
+    </message>
+    <message>
+        <source>The selected PDF could not be inserted.</source>
+        <translation>No se pudo insertar el PDF seleccionado.</translation>
+    </message>
+    <message>
+        <source>Insert pages from PDF</source>
+        <translation>Insertar páginas desde PDF</translation>
+    </message>
     <message>
         <source>Crop Box Margins</source>
         <translation>Márgenes del recuadro de recorte</translation>
@@ -839,6 +1087,10 @@ https://github.com/sstucke/cualpdf</translation>
         <translation>Usá Shift al hacer clic para seleccionar un rango continuo de páginas PDF.</translation>
     </message>
     <message>
+        <source>Use the page selection menu to select all, none, even, or odd pages.</source>
+        <translation>Usá el menú de selección de páginas para seleccionar todas, ninguna, las pares o las impares.</translation>
+    </message>
+    <message>
         <source>Switch to region selection to draw a crop area directly on a page.</source>
         <translation>Cambiá a selección de región para dibujar un área de recorte directamente sobre una página.</translation>
     </message>
@@ -851,8 +1103,48 @@ https://github.com/sstucke/cualpdf</translation>
         <translation>Mantené presionado Ctrl o Command y usá la rueda del mouse para ampliar el PDF.</translation>
     </message>
     <message>
+        <source>Use the page number field or the arrow buttons to navigate directly through a PDF.</source>
+        <translation>Usá el campo de número de página o los botones de flecha para navegar directamente por un PDF.</translation>
+    </message>
+    <message>
+        <source>Choose Continuous or Discrete view depending on how you want to browse pages.</source>
+        <translation>Elegí la vista Continua o Discreta según cómo quieras recorrer las páginas.</translation>
+    </message>
+    <message>
+        <source>Fit Page, Fit Width, and Fit Two Columns adapt the PDF to the available space.</source>
+        <translation>Ajustar página, Ajustar ancho y Ajustar dos columnas adaptan el PDF al espacio disponible.</translation>
+    </message>
+    <message>
+        <source>Turn on Organize Pages, then drag one or more selected pages to an insertion marker.</source>
+        <translation>Activá Reorganizar páginas y arrastrá una o más páginas seleccionadas hasta un marcador de inserción.</translation>
+    </message>
+    <message>
+        <source>Right-click an insertion marker to add a blank page, paste pages, or insert another PDF.</source>
+        <translation>Hacé clic derecho en un marcador de inserción para agregar una página en blanco, pegar páginas o insertar otro PDF.</translation>
+    </message>
+    <message>
+        <source>Cut or copy selected pages with Ctrl or Command plus X or C, then paste them at an insertion marker.</source>
+        <translation>Cortá o copiá las páginas seleccionadas con Ctrl o Command más X o C y pegalas en un marcador de inserción.</translation>
+    </message>
+    <message>
+        <source>Extract PDF saves the selected pages as a new PDF without changing the open document.</source>
+        <translation>Extraer PDF guarda las páginas seleccionadas como un PDF nuevo sin modificar el documento abierto.</translation>
+    </message>
+    <message>
+        <source>Undo and Redo keep up to 20 page edits, including crop, rotation, and page organization.</source>
+        <translation>Deshacer y Rehacer conservan hasta 20 ediciones de páginas, incluidos recortes, rotaciones y reorganizaciones.</translation>
+    </message>
+    <message>
+        <source>Save writes edits to the open PDF; Preferences can create and limit timestamped backups first.</source>
+        <translation>Guardar escribe los cambios en el PDF abierto; Preferencias permite crear y limitar copias de seguridad con fecha y hora antes de hacerlo.</translation>
+    </message>
+    <message>
         <source>Right-click a PDF or folder to reveal it in the system file explorer.</source>
         <translation>Hacé clic derecho en un PDF o carpeta para mostrarlo en el explorador de archivos del sistema.</translation>
+    </message>
+    <message>
+        <source>Right-click a PDF in the explorer to open it with the system default application.</source>
+        <translation>Hacé clic derecho en un PDF del explorador para abrirlo con la aplicación predeterminada del sistema.</translation>
     </message>
     <message>
         <source>Pin frequently used folders to Favorites from the folder tree.</source>
@@ -861,6 +1153,46 @@ https://github.com/sstucke/cualpdf</translation>
     <message>
         <source>Use the Sort menu to order files by name, size, or modification date.</source>
         <translation>Usá el menú Ordenar para ordenar archivos por nombre, tamaño o fecha de modificación.</translation>
+    </message>
+    <message>
+        <source>The Sort menu can keep folders before files in every sort order.</source>
+        <translation>El menú Ordenar puede mantener las carpetas antes que los archivos en cualquier orden.</translation>
+    </message>
+    <message>
+        <source>Switch the file explorer between Thumbnails, Details, and Compact List views.</source>
+        <translation>Alterná el explorador de archivos entre las vistas Miniaturas, Detalles y Lista compacta.</translation>
+    </message>
+    <message>
+        <source>Use the explorer zoom control to resize thumbnails; select a PDF to preview its pages and details.</source>
+        <translation>Usá el control de zoom del explorador para cambiar el tamaño de las miniaturas; seleccioná un PDF para previsualizar sus páginas y detalles.</translation>
+    </message>
+    <message>
+        <source>Open Folder chooses a location, while the location field lets you type a folder path directly.</source>
+        <translation>Abrir carpeta permite elegir una ubicación, mientras que el campo de ubicación permite escribir directamente la ruta de una carpeta.</translation>
+    </message>
+    <message>
+        <source>The Recent menu provides quick access to PDFs you opened before.</source>
+        <translation>El menú Recientes permite acceder rápidamente a los PDF que abriste anteriormente.</translation>
+    </message>
+    <message>
+        <source>Use Ctrl or Command plus W to close the current tab.</source>
+        <translation>Usá Ctrl o Command más W para cerrar la pestaña actual.</translation>
+    </message>
+    <message>
+        <source>The Window menu can close all tabs, close the other tabs, or reopen the file explorer.</source>
+        <translation>El menú Ventana permite cerrar todas las pestañas, cerrar las demás o volver a abrir el explorador de archivos.</translation>
+    </message>
+    <message>
+        <source>Preferences controls whether Close All preserves the file explorer tab.</source>
+        <translation>Preferencias controla si Cerrar todas preserva la pestaña del explorador de archivos.</translation>
+    </message>
+    <message>
+        <source>Preferences also controls startup tips, automatic tip closing, and searchable settings.</source>
+        <translation>Preferencias también controla los tips de inicio, su cierre automático y permite buscar opciones.</translation>
+    </message>
+    <message>
+        <source>Use Tools &gt; Combine Files to add PDFs, drag them into order, choose an output file, and combine them locally.</source>
+        <translation>Usá Herramientas &gt; Combinar archivos para agregar PDF, arrastrarlos hasta dejarlos en orden, elegir una salida y combinarlos localmente.</translation>
     </message>
     <message>
         <source>Page rotation applies to every page currently selected.</source>

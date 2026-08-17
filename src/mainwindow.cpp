@@ -2,6 +2,7 @@
 #include "ui_mainwindow.h"
 
 #include "foldercontentmodel.h"
+#include "mergepdfdialog.h"
 #include "pdfgriditemdelegate.h"
 #include "pdflistitemdelegate.h"
 #include "pdfviewerwidget.h"
@@ -238,6 +239,7 @@ MainWindow::MainWindow(QWidget *parent)
 
     setupViewModeMenu();
     setupSortMenu();
+    setupToolsMenu();
     setupWindowMenu();
     applyContentViewMode(appSettings.contentViewMode());
 
@@ -557,6 +559,15 @@ void MainWindow::setupSortMenu()
     ui->menubar->insertMenu(ui->menuHelp->menuAction(), m_sortMenuBar);
 }
 
+void MainWindow::setupToolsMenu()
+{
+    m_toolsMenu = new QMenu(tr("&Tools"), ui->menubar);
+    QAction *combineFilesAction = m_toolsMenu->addAction(tr("Combine Files…"));
+    connect(combineFilesAction, &QAction::triggered,
+            this, &MainWindow::showMergePdfDialog);
+    ui->menubar->insertMenu(ui->menuHelp->menuAction(), m_toolsMenu);
+}
+
 void MainWindow::setupWindowMenu()
 {
     m_windowMenu = new QMenu(tr("&Window"), ui->menubar);
@@ -577,6 +588,27 @@ void MainWindow::setupWindowMenu()
     m_windowMenu->addSeparator();
     m_openExplorerAction = m_windowMenu->addAction(tr("Open Explorer"));
     connect(m_openExplorerAction, &QAction::triggered, this, &MainWindow::openExplorerTab);
+}
+
+void MainWindow::showMergePdfDialog()
+{
+    QStringList openPdfPaths;
+    for (int index = 0; index < ui->tabWidget->count(); ++index) {
+        if (auto *viewer = qobject_cast<PdfViewerWidget *>(
+                ui->tabWidget->widget(index))) {
+            openPdfPaths.append(viewer->filePath());
+        }
+    }
+    MergePdfDialog dialog(currentFolderPath, openPdfPaths, this);
+    connect(&dialog, &MergePdfDialog::mergeCompleted, this,
+            [this](const QString &outputPath) {
+                addRecentFile(outputPath);
+                if (QDir::cleanPath(QFileInfo(outputPath).absolutePath())
+                    == QDir::cleanPath(currentFolderPath)) {
+                    scheduleFolderRefresh();
+                }
+            });
+    dialog.exec();
 }
 
 void MainWindow::applyContentViewMode(AppSettings::ContentViewMode mode)

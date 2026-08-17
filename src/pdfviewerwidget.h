@@ -19,6 +19,7 @@ class QLabel;
 class QScrollArea;
 class QSpinBox;
 class QToolButton;
+class PdfInsertionPlaceholder;
 
 // PDF viewer with lazy page rendering. Full document tabs expose navigation,
 // page layout and zoom controls; the compact details-panel preview reuses the
@@ -82,6 +83,12 @@ private:
         QString description;
         QVector<PdfPageState> beforeStates;
         QVector<PdfPageState> afterStates;
+        QVector<quint64> beforePageIds;
+        QVector<quint64> afterPageIds;
+        QVector<quint64> archivedPageIds;
+        QByteArray pageArchive;
+
+        bool changesPageStructure() const { return !beforePageIds.isEmpty(); }
     };
 
     enum class PageLayout {
@@ -107,7 +114,34 @@ private:
     void onDocumentLoaded(bool valid, const std::shared_ptr<PdfDocument> &document,
                           const QVector<QSizeF> &pageSizes);
     void buildPageLabels(int pageCount);
+    void buildInsertionPlaceholders();
     void rebuildPageLayout();
+    void setOrganizePagesEnabled(bool enabled);
+    void showPageContextMenu(int pageIndex, const QPoint &globalPosition);
+    void showInsertionContextMenu(int insertionIndex, const QPoint &globalPosition);
+    void startSelectedPageDrag(QLabel *sourceLabel);
+    void setPlaceholderDragActive(bool active);
+    void moveSelectedPagesTo(int insertionIndex);
+    void copySelectedPages(bool cut);
+    void finishPageCopy(const QByteArray &pageArchive, int pageCount);
+    void extractSelectedPages();
+    void insertBlankPageAt(int insertionIndex);
+    void pastePagesAt(int insertionIndex);
+    void insertPdfAt(int insertionIndex);
+    void insertArchiveAt(int insertionIndex, const QByteArray &pageArchive,
+                         int pageCount, const QString &description);
+    void applyPageStructureChange(const QString &description,
+                                  const QVector<quint64> &beforePageIds,
+                                  const QVector<quint64> &afterPageIds,
+                                  const QVector<quint64> &archivedPageIds,
+                                  const QByteArray &pageArchive,
+                                  const QVector<quint64> &selectedPageIds);
+    void finishPageStructureChange(bool success, const QVector<QSizeF> &pageSizes,
+                                   const EditHistoryEntry &historyEntry,
+                                   const QVector<quint64> &selectedPageIds);
+    void rebuildPagesAfterStructure(const QVector<QSizeF> &pageSizes,
+                                    const QVector<quint64> &pageIds,
+                                    const QVector<quint64> &selectedPageIds);
     void setPageLayout(PageLayout layout);
     void applyZoom();
     void setCustomZoom(int percent);
@@ -134,6 +168,10 @@ private:
     void finishHistoryNavigation(bool success, const QVector<QSizeF> &pageSizes,
                                  const QVector<int> &affectedPages,
                                  int targetHistoryPosition);
+    void finishStructureHistoryNavigation(bool success,
+                                          const QVector<QSizeF> &pageSizes,
+                                          const QVector<quint64> &targetPageIds,
+                                          int targetHistoryPosition);
     void updateModifiedState();
     void finishDocumentSave(bool success, const QString &errorMessage);
     void setCurrentPageFromPointer(int pageIndex);
@@ -159,7 +197,9 @@ private:
     QGridLayout *m_pagesLayout;
     QLabel *m_loadingLabel = nullptr;
     QVector<QLabel *> m_pageLabels;
+    QVector<PdfInsertionPlaceholder *> m_pagePlaceholders;
     QVector<QSizeF> m_pageSizes;
+    QVector<quint64> m_pageIds;
     QVector<int> m_renderedWidths;
     QHash<int, int> m_pagesLoading;
     QToolButton *m_previousPageButton = nullptr;
@@ -182,6 +222,10 @@ private:
     QToolButton *m_cropButton = nullptr;
     QToolButton *m_rotateCounterclockwiseButton = nullptr;
     QToolButton *m_rotateClockwiseButton = nullptr;
+    QToolButton *m_organizePagesButton = nullptr;
+    QAction *m_cutPagesAction = nullptr;
+    QAction *m_copyPagesAction = nullptr;
+    QAction *m_extractPagesAction = nullptr;
     PageLayout m_pageLayout = PageLayout::Continuous;
     ZoomMode m_zoomMode = ZoomMode::FixedWidth;
     SelectionMode m_selectionMode = SelectionMode::Page;
@@ -191,6 +235,9 @@ private:
     QRectF m_regionSelection;
     QPointF m_regionDragStart;
     bool m_draggingRegion = false;
+    bool m_organizePagesEnabled = false;
+    QPoint m_pageDragStart;
+    int m_pageDragSourceIndex = -1;
     bool m_transformInProgress = false;
     bool m_saveInProgress = false;
     bool m_modified = false;
@@ -204,6 +251,7 @@ private:
     bool m_updatingControls = false;
     bool m_valid = false;
     int m_currentPageIndex = -1;
+    quint64 m_nextPageId = 1;
 
     static constexpr int kHistoryLimit = 20;
 };

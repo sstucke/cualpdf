@@ -2,10 +2,12 @@
 
 #include <fpdfview.h>
 #include <fpdf_edit.h>
+#include <fpdf_ppo.h>
 #include <fpdf_save.h>
 #include <fpdf_transformpage.h>
 
 #include <QByteArray>
+#include <QBuffer>
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
@@ -15,6 +17,7 @@
 #include <QMutexLocker>
 #include <QRegularExpression>
 #include <QSaveFile>
+#include <QSet>
 
 #include <algorithm>
 
@@ -44,6 +47,34 @@ int writePdfBlock(FPDF_FILEWRITE *fileWrite, const void *data, unsigned long siz
     return writer->device
                && writer->device->write(static_cast<const char *>(data),
                                         static_cast<qint64>(size)) == static_cast<qint64>(size);
+}
+
+QByteArray serializeDocument(FPDF_DOCUMENT document)
+{
+    QByteArray data;
+    QBuffer buffer(&data);
+    if (!buffer.open(QIODevice::WriteOnly))
+        return {};
+
+    PdfFileWriter writer;
+    writer.fileWrite.version = 1;
+    writer.fileWrite.WriteBlock = &writePdfBlock;
+    writer.device = &buffer;
+    if (!FPDF_SaveAsCopy(document, &writer.fileWrite, FPDF_NO_INCREMENTAL))
+        return {};
+    return data;
+}
+
+bool hasUniqueIds(const QVector<quint64> &ids)
+{
+    QSet<quint64> uniqueIds;
+    uniqueIds.reserve(ids.size());
+    for (const quint64 id : ids) {
+        if (id == 0 || uniqueIds.contains(id))
+            return false;
+        uniqueIds.insert(id);
+    }
+    return true;
 }
 
 bool backupNameFits(const QString &directoryPath, const QString &fileName)
@@ -433,6 +464,232 @@ bool PdfDocument::restorePageStates(const QVector<PdfPageState> &states)
     return true;
 }
 
+QByteArray PdfDocument::exportPages(const QVector<int> &pageIndexes) const
+{
+    if (!m_document || pageIndexes.isEmpty())
+        return {};
+
+    const QMutexLocker locker(&pdfiumMutex());
+    const auto sourceDocument = static_cast<FPDF_DOCUMENT>(m_document);
+    const int pageCount = FPDF_GetPageCount(sourceDocument);
+    QSet<int> uniqueIndexes;
+    for (const int pageIndex : pageIndexes) {
+        if (pageIndex < 0 || pageIndex >= pageCount || uniqueIndexes.contains(pageIndex))
+            return {};
+        uniqueIndexes.insert(pageIndex);
+    }
+
+    const FPDF_DOCUMENT archiveDocument = FPDF_CreateNewDocument();
+    if (!archiveDocument)
+        return {};
+
+    const bool imported = FPDF_ImportPagesByIndex(
+        archiveDocument, sourceDocument, pageIndexes.constData(),
+        static_cast<unsigned long>(pageIndexes.size()), 0);
+    const QByteArray archive = imported ? serializeDocument(archiveDocument) : QByteArray();
+    FPDF_CloseDocument(archiveDocument);
+    return archive;
+}
+
+QByteArray PdfDocument::createBlankPageArchive(const QSizeF &pageSize)
+{
+    if (pageSize.width() <= 0.0 || pageSize.height() <= 0.0)
+        return {};
+
+    const QMutexLocker locker(&pdfiumMutex());
+    const FPDF_DOCUMENT archiveDocument = FPDF_CreateNewDocument();
+    if (!archiveDocument)
+        return {};
+
+    const FPDF_PAGE page = FPDFPage_New(archiveDocument, 0,
+                                        pageSize.width(), pageSize.height());
+    QByteArray archive;
+    if (page) {
+        const bool generated = FPDFPage_GenerateContent(page);
+        FPDF_ClosePage(page);
+        if (generated)
+            archive = serializeDocument(archiveDocument);
+    }
+    FPDF_CloseDocument(archiveDocument);
+    return archive;
+}
+
+bool PdfDocument::mergeFiles(const QStringList &inputPaths, const QString &outputPath,
+                             QString *failedInputPath, QString *fileErrorMessage)
+{
+    if (failedInputPath)
+        failedInputPath->clear();
+    if (fileErrorMessage)
+        fileErrorMessage->clear();
+    if (inputPaths.size() < 2 || outputPath.isEmpty())
+        return false;
+
+    QSaveFile output(outputPath);
+    output.setDirectWriteFallback(false);
+    if (!output.open(QIODevice::WriteOnly)) {
+        if (fileErrorMessage)
+            *fileErrorMessage = output.errorString();
+        return false;
+    }
+
+    bool success = true;
+    {
+        const QMutexLocker locker(&pdfiumMutex());
+        const FPDF_DOCUMENT mergedDocument = FPDF_CreateNewDocument();
+        if (!mergedDocument) {
+            success = false;
+        } else {
+            int insertionIndex = 0;
+            for (const QString &inputPath : inputPaths) {
+                const QByteArray pathBytes = inputPath.toUtf8();
+                const FPDF_DOCUMENT inputDocument =
+                    FPDF_LoadDocument(pathBytes.constData(), nullptr);
+                if (!inputDocument || FPDF_GetPageCount(inputDocument) <= 0) {
+                    if (failedInputPath)
+                        *failedInputPath = inputPath;
+                    if (inputDocument)
+                        FPDF_CloseDocument(inputDocument);
+                    success = false;
+                    break;
+                }
+
+                const int inputPageCount = FPDF_GetPageCount(inputDocument);
+                success = FPDF_ImportPages(
+                    mergedDocument, inputDocument, nullptr, insertionIndex);
+                FPDF_CloseDocument(inputDocument);
+                if (!success) {
+                    if (failedInputPath)
+                        *failedInputPath = inputPath;
+                    break;
+                }
+                insertionIndex += inputPageCount;
+            }
+
+            if (success) {
+                PdfFileWriter writer;
+                writer.fileWrite.version = 1;
+                writer.fileWrite.WriteBlock = &writePdfBlock;
+                writer.device = &output;
+                success = FPDF_SaveAsCopy(
+                    mergedDocument, &writer.fileWrite, FPDF_NO_INCREMENTAL);
+            }
+            FPDF_CloseDocument(mergedDocument);
+        }
+    }
+
+    if (!success || !output.flush()) {
+        output.cancelWriting();
+        if (fileErrorMessage && !output.errorString().isEmpty())
+            *fileErrorMessage = output.errorString();
+        return false;
+    }
+    if (!output.commit()) {
+        if (fileErrorMessage)
+            *fileErrorMessage = output.errorString();
+        return false;
+    }
+    return true;
+}
+
+bool PdfDocument::restorePageStructure(const QVector<quint64> &currentPageIds,
+                                       const QVector<quint64> &targetPageIds,
+                                       const QVector<quint64> &archivedPageIds,
+                                       const QByteArray &pageArchive)
+{
+    if (!m_document || targetPageIds.isEmpty()
+        || !hasUniqueIds(currentPageIds) || !hasUniqueIds(targetPageIds)
+        || (!archivedPageIds.isEmpty() && !hasUniqueIds(archivedPageIds))) {
+        return false;
+    }
+
+    const QSet<quint64> currentIdSet(currentPageIds.cbegin(), currentPageIds.cend());
+    const QSet<quint64> archivedIdSet(archivedPageIds.cbegin(), archivedPageIds.cend());
+    for (const quint64 targetId : targetPageIds) {
+        if (!currentIdSet.contains(targetId) && !archivedIdSet.contains(targetId))
+            return false;
+    }
+
+    const QMutexLocker locker(&pdfiumMutex());
+    auto document = static_cast<FPDF_DOCUMENT>(m_document);
+    if (FPDF_GetPageCount(document) != currentPageIds.size())
+        return false;
+
+    FPDF_DOCUMENT archiveDocument = nullptr;
+    if (!archivedPageIds.isEmpty()) {
+        if (pageArchive.isEmpty())
+            return false;
+        archiveDocument = FPDF_LoadMemDocument64(
+            pageArchive.constData(), static_cast<size_t>(pageArchive.size()), nullptr);
+        if (!archiveDocument
+            || FPDF_GetPageCount(archiveDocument) != archivedPageIds.size()) {
+            if (archiveDocument)
+                FPDF_CloseDocument(archiveDocument);
+            return false;
+        }
+    }
+
+    const QByteArray rollbackData = serializeDocument(document);
+    if (rollbackData.isEmpty()) {
+        if (archiveDocument)
+            FPDF_CloseDocument(archiveDocument);
+        return false;
+    }
+
+    QVector<quint64> workingIds = currentPageIds;
+    const QSet<quint64> targetIdSet(targetPageIds.cbegin(), targetPageIds.cend());
+    bool success = true;
+    for (int index = workingIds.size() - 1; index >= 0; --index) {
+        if (!targetIdSet.contains(workingIds.at(index))) {
+            FPDFPage_Delete(document, index);
+            workingIds.removeAt(index);
+        }
+    }
+
+    for (int targetIndex = 0; success && targetIndex < targetPageIds.size(); ++targetIndex) {
+        const quint64 targetId = targetPageIds.at(targetIndex);
+        if (workingIds.contains(targetId))
+            continue;
+
+        const int archiveIndex = archivedPageIds.indexOf(targetId);
+        success = archiveDocument && archiveIndex >= 0;
+        if (success) {
+            const int sourceIndex = archiveIndex;
+            success = FPDF_ImportPagesByIndex(document, archiveDocument, &sourceIndex, 1,
+                                              targetIndex);
+        }
+        if (success)
+            workingIds.insert(targetIndex, targetId);
+    }
+
+    if (success && workingIds != targetPageIds) {
+        QVector<int> targetIndexes;
+        targetIndexes.reserve(targetPageIds.size());
+        for (const quint64 targetId : targetPageIds) {
+            const int currentIndex = workingIds.indexOf(targetId);
+            if (currentIndex < 0) {
+                success = false;
+                break;
+            }
+            targetIndexes.append(currentIndex);
+        }
+        if (success) {
+            success = FPDF_MovePages(document, targetIndexes.constData(),
+                                     static_cast<unsigned long>(targetIndexes.size()), 0);
+        }
+    }
+
+    if (archiveDocument)
+        FPDF_CloseDocument(archiveDocument);
+    if (success && FPDF_GetPageCount(document) == targetPageIds.size())
+        return true;
+
+    FPDF_CloseDocument(document);
+    m_memoryData = rollbackData;
+    m_document = FPDF_LoadMemDocument64(
+        m_memoryData.constData(), static_cast<size_t>(m_memoryData.size()), nullptr);
+    return false;
+}
+
 bool PdfDocument::saveSafely(const QString &filePath, bool createTimestampedBackup,
                              int backupVersionLimit, QString *errorMessage)
 {
@@ -475,6 +732,7 @@ bool PdfDocument::saveSafely(const QString &filePath, bool createTimestampedBack
         const QMutexLocker locker(&pdfiumMutex());
         FPDF_CloseDocument(static_cast<FPDF_DOCUMENT>(m_document));
         m_document = nullptr;
+        m_memoryData.clear();
     }
 
     QString backupPath;
@@ -496,6 +754,7 @@ bool PdfDocument::saveSafely(const QString &filePath, bool createTimestampedBack
     {
         const QMutexLocker locker(&pdfiumMutex());
         m_document = FPDF_LoadDocument(pathBytes.constData(), nullptr);
+        m_memoryData.clear();
     }
 
     if (!committed) {

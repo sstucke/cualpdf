@@ -3,12 +3,21 @@
 #include "pdfdocument.h"
 
 #include <QActionGroup>
+#include <QApplication>
 #include <QButtonGroup>
 #include <QComboBox>
+#include <QContextMenuEvent>
 #include <QCoreApplication>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
+#include <QDrag>
+#include <QDragEnterEvent>
+#include <QDragLeaveEvent>
+#include <QDir>
+#include <QDropEvent>
+#include <QFileDialog>
+#include <QFileInfo>
 #include <QFrame>
 #include <QGridLayout>
 #include <QGroupBox>
@@ -17,6 +26,8 @@
 #include <QLineEdit>
 #include <QLoggingCategory>
 #include <QMenu>
+#include <QMimeData>
+#include <QMessageBox>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
@@ -27,6 +38,7 @@
 #include <QResizeEvent>
 #include <QScrollArea>
 #include <QScrollBar>
+#include <QSaveFile>
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QStyle>
@@ -39,6 +51,115 @@
 
 #include <array>
 #include <algorithm>
+#include <functional>
+
+namespace {
+constexpr auto kPageDragMimeType = "application/x-cualpdf-page-selection";
+}
+
+class PdfInsertionPlaceholder final : public QWidget
+{
+public:
+    using ContextMenuHandler = std::function<void(int, const QPoint &)>;
+    using DropHandler = std::function<void(int)>;
+
+    PdfInsertionPlaceholder(int insertionIndex, QByteArray dragToken,
+                            ContextMenuHandler contextMenuHandler,
+                            DropHandler dropHandler, QWidget *parent)
+        : QWidget(parent)
+        , m_insertionIndex(insertionIndex)
+        , m_dragToken(std::move(dragToken))
+        , m_contextMenuHandler(std::move(contextMenuHandler))
+        , m_dropHandler(std::move(dropHandler))
+    {
+        setAcceptDrops(true);
+        setCursor(Qt::PointingHandCursor);
+        setToolTip(QCoreApplication::translate(
+            "PdfViewerWidget", "Insert pages here"));
+    }
+
+    void setDragActive(bool active)
+    {
+        if (m_dragActive == active)
+            return;
+        m_dragActive = active;
+        if (!active)
+            m_dropTarget = false;
+        update();
+    }
+
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing);
+        const QColor accent(QStringLiteral("#2684ff"));
+        const bool horizontal = width() >= height();
+        const QPointF first = horizontal ? QPointF(4, height() / 2.0)
+                                         : QPointF(width() / 2.0, 4);
+        const QPointF second = horizontal ? QPointF(width() - 4, height() / 2.0)
+                                          : QPointF(width() / 2.0, height() - 4);
+        QColor lineColor = palette().color(QPalette::Mid);
+        qreal lineWidth = 1.0;
+        if (m_dragActive) {
+            lineColor = accent;
+            lineWidth = m_dropTarget ? 4.0 : 2.0;
+            painter.fillRect(rect(), QColor(38, 132, 255, m_dropTarget ? 48 : 18));
+        }
+        painter.setPen(QPen(lineColor, lineWidth, Qt::SolidLine, Qt::RoundCap));
+        painter.drawLine(first, second);
+
+        const QPointF center = rect().center();
+        painter.setBrush(m_dragActive ? accent : palette().color(QPalette::Button));
+        painter.setPen(QPen(lineColor, 1.2));
+        painter.drawEllipse(center, 6, 6);
+        painter.setPen(QPen(m_dragActive ? Qt::white : lineColor, 1.3));
+        painter.drawLine(center + QPointF(-3, 0), center + QPointF(3, 0));
+        painter.drawLine(center + QPointF(0, -3), center + QPointF(0, 3));
+    }
+
+    void contextMenuEvent(QContextMenuEvent *event) override
+    {
+        if (m_contextMenuHandler)
+            m_contextMenuHandler(m_insertionIndex, event->globalPos());
+        event->accept();
+    }
+
+    void dragEnterEvent(QDragEnterEvent *event) override
+    {
+        if (event->mimeData()->data(kPageDragMimeType) == m_dragToken) {
+            m_dropTarget = true;
+            update();
+            event->acceptProposedAction();
+        }
+    }
+
+    void dragLeaveEvent(QDragLeaveEvent *event) override
+    {
+        m_dropTarget = false;
+        update();
+        event->accept();
+    }
+
+    void dropEvent(QDropEvent *event) override
+    {
+        if (event->mimeData()->data(kPageDragMimeType) != m_dragToken)
+            return;
+        m_dropTarget = false;
+        update();
+        event->acceptProposedAction();
+        if (m_dropHandler)
+            m_dropHandler(m_insertionIndex);
+    }
+
+private:
+    int m_insertionIndex;
+    QByteArray m_dragToken;
+    ContextMenuHandler m_contextMenuHandler;
+    DropHandler m_dropHandler;
+    bool m_dragActive = false;
+    bool m_dropTarget = false;
+};
 
 namespace {
 constexpr int kPageSpacing = 12;
@@ -48,6 +169,13 @@ constexpr int kMaximumZoom = 400;
 constexpr double kPdfPointToPixel = 96.0 / 72.0;
 constexpr double kDefaultPageWidth = 595.0;
 constexpr double kDefaultPageHeight = 842.0;
+
+struct PageClipboard {
+    QByteArray pageArchive;
+    int pageCount = 0;
+};
+
+PageClipboard g_pageClipboard;
 
 constexpr std::array<int, 13> kZoomSteps = {
     10, 25, 33, 50, 67, 75, 100, 125, 150, 200, 250, 300, 400,
@@ -780,6 +908,44 @@ void PdfViewerWidget::buildToolbar()
     editToolbar->setIconSize(QSize(28, 24));
     layout()->addWidget(editToolbar);
 
+    m_organizePagesButton = new QToolButton(editToolbar);
+    m_organizePagesButton->setObjectName(QStringLiteral("organizePagesButton"));
+    m_organizePagesButton->setCheckable(true);
+    m_organizePagesButton->setIcon(
+        style()->standardIcon(QStyle::SP_FileDialogDetailedView));
+    m_organizePagesButton->setText(tr("Organize Pages"));
+    m_organizePagesButton->setToolTip(tr("Reorder, copy, and insert pages"));
+    m_organizePagesButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    editToolbar->addWidget(m_organizePagesButton);
+
+    editToolbar->addSeparator();
+
+    m_cutPagesAction = new QAction(tr("Cut"), this);
+    m_cutPagesAction->setShortcut(QKeySequence::Cut);
+    m_cutPagesAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+    addAction(m_cutPagesAction);
+    auto *cutPagesButton = new QToolButton(editToolbar);
+    cutPagesButton->setDefaultAction(m_cutPagesAction);
+    cutPagesButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    editToolbar->addWidget(cutPagesButton);
+
+    m_copyPagesAction = new QAction(tr("Copy"), this);
+    m_copyPagesAction->setShortcut(QKeySequence::Copy);
+    m_copyPagesAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+    addAction(m_copyPagesAction);
+    auto *copyPagesButton = new QToolButton(editToolbar);
+    copyPagesButton->setDefaultAction(m_copyPagesAction);
+    copyPagesButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    editToolbar->addWidget(copyPagesButton);
+
+    m_extractPagesAction = new QAction(tr("Extract PDF…"), this);
+    auto *extractPagesButton = new QToolButton(editToolbar);
+    extractPagesButton->setDefaultAction(m_extractPagesAction);
+    extractPagesButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    editToolbar->addWidget(extractPagesButton);
+
+    editToolbar->addSeparator();
+
     m_cropButton = new QToolButton(editToolbar);
     m_cropButton->setObjectName(QStringLiteral("cropButton"));
     m_cropButton->setIcon(cropToolIcon(iconColor));
@@ -803,6 +969,14 @@ void PdfViewerWidget::buildToolbar()
 
     connect(m_cropButton, &QToolButton::clicked,
             this, &PdfViewerWidget::cropSelectedRegion);
+    connect(m_organizePagesButton, &QToolButton::toggled,
+            this, &PdfViewerWidget::setOrganizePagesEnabled);
+    connect(m_cutPagesAction, &QAction::triggered, this,
+            [this]() { copySelectedPages(/*cut=*/true); });
+    connect(m_copyPagesAction, &QAction::triggered, this,
+            [this]() { copySelectedPages(/*cut=*/false); });
+    connect(m_extractPagesAction, &QAction::triggered,
+            this, &PdfViewerWidget::extractSelectedPages);
     connect(m_rotateCounterclockwiseButton, &QToolButton::clicked, this,
             [this]() { rotateSelectedPages(false); });
     connect(m_rotateClockwiseButton, &QToolButton::clicked, this,
@@ -852,7 +1026,12 @@ void PdfViewerWidget::onDocumentLoaded(bool valid,
     }
 
     m_currentPageIndex = 0;
+    m_pageIds.clear();
+    m_pageIds.reserve(pageSizes.size());
+    for (int pageIndex = 0; pageIndex < pageSizes.size(); ++pageIndex)
+        m_pageIds.append(m_nextPageId++);
     buildPageLabels(pageSizes.size());
+    buildInsertionPlaceholders();
     // A single Qt layout tops out at QLAYOUTSIZE_MAX (roughly 524k px).
     // Long documents can exceed that at ordinary zoom levels, so valid PDF
     // pages are positioned manually on the scroll canvas instead.
@@ -897,6 +1076,23 @@ void PdfViewerWidget::buildPageLabels(int pageCount)
     }
 }
 
+void PdfViewerWidget::buildInsertionPlaceholders()
+{
+    m_pagePlaceholders.reserve(m_pageLabels.size() + 1);
+    for (int insertionIndex = 0; insertionIndex <= m_pageLabels.size(); ++insertionIndex) {
+        auto *placeholder = new PdfInsertionPlaceholder(
+            insertionIndex,
+            QByteArray::number(reinterpret_cast<quintptr>(this), 16),
+            [this](int index, const QPoint &position) {
+                showInsertionContextMenu(index, position);
+            },
+            [this](int index) { moveSelectedPagesTo(index); },
+            m_pagesContainer);
+        placeholder->setVisible(m_organizePagesEnabled);
+        m_pagePlaceholders.append(placeholder);
+    }
+}
+
 QSizeF PdfViewerWidget::pageSize(int pageIndex) const
 {
     if (pageIndex >= 0 && pageIndex < m_pageSizes.size()) {
@@ -920,6 +1116,8 @@ void PdfViewerWidget::rebuildPageLayout()
 
     for (QLabel *label : m_pageLabels)
         label->hide();
+    for (PdfInsertionPlaceholder *placeholder : m_pagePlaceholders)
+        placeholder->hide();
 
     QVector<int> visiblePages;
     int columns = 1;
@@ -988,6 +1186,45 @@ void PdfViewerWidget::rebuildPageLayout()
     m_pagesContainer->setMinimumSize(0, 0);
     m_pagesContainer->setMinimumSize(canvasWidth, canvasHeight);
     m_pagesContainer->updateGeometry();
+
+    if (!m_organizePagesEnabled)
+        return;
+
+    for (int insertionIndex = 0; insertionIndex < m_pagePlaceholders.size();
+         ++insertionIndex) {
+        PdfInsertionPlaceholder *placeholder = m_pagePlaceholders[insertionIndex];
+        QLabel *previous = insertionIndex > 0 ? m_pageLabels[insertionIndex - 1] : nullptr;
+        QLabel *next = insertionIndex < m_pageLabels.size()
+                           ? m_pageLabels[insertionIndex]
+                           : nullptr;
+        const bool previousVisible = previous && !previous->isHidden();
+        const bool nextVisible = next && !next->isHidden();
+        if (!previousVisible && !nextVisible)
+            continue;
+
+        QRect geometry;
+        if (previousVisible && nextVisible
+            && qAbs(previous->geometry().center().y() - next->geometry().center().y())
+                   < qMin(previous->height(), next->height()) / 2) {
+            const int gapLeft = previous->geometry().right() + 1;
+            const int gapRight = next->geometry().left() - 1;
+            geometry = QRect(gapLeft, qMin(previous->y(), next->y()),
+                             qMax(10, gapRight - gapLeft + 1),
+                             qMax(previous->height(), next->height()));
+        } else if (nextVisible) {
+            const int gapTop = previousVisible ? previous->geometry().bottom() + 1
+                                               : qMax(0, next->y() - kPageSpacing);
+            const int gapBottom = next->y() - 1;
+            geometry = QRect(next->x(), gapTop, next->width(),
+                             qMax(10, gapBottom - gapTop + 1));
+        } else {
+            geometry = QRect(previous->x(), previous->geometry().bottom() + 1,
+                             previous->width(), kPageSpacing);
+        }
+        placeholder->setGeometry(geometry);
+        placeholder->show();
+        placeholder->raise();
+    }
 }
 
 int PdfViewerWidget::availableColumnCount() const
@@ -1222,6 +1459,14 @@ void PdfViewerWidget::syncFitControl()
 
 void PdfViewerWidget::setSelectionMode(SelectionMode mode)
 {
+    if (mode == SelectionMode::Region && m_organizePagesEnabled) {
+        m_organizePagesEnabled = false;
+        if (m_organizePagesButton) {
+            const QSignalBlocker blocker(m_organizePagesButton);
+            m_organizePagesButton->setChecked(false);
+        }
+        rebuildPageLayout();
+    }
     const bool modeChanged = m_selectionMode != mode;
     m_selectionMode = mode;
 
@@ -1241,9 +1486,498 @@ void PdfViewerWidget::setSelectionMode(SelectionMode mode)
     for (QLabel *label : m_pageLabels) {
         label->setCursor(mode == SelectionMode::Region
                              ? Qt::CrossCursor
-                             : Qt::PointingHandCursor);
+                             : (m_organizePagesEnabled ? Qt::OpenHandCursor
+                                                      : Qt::PointingHandCursor));
     }
     updateSelectionOverlays();
+}
+
+void PdfViewerWidget::setOrganizePagesEnabled(bool enabled)
+{
+    if (m_organizePagesEnabled == enabled)
+        return;
+    m_organizePagesEnabled = enabled;
+    if (enabled) {
+        setSelectionMode(SelectionMode::Page);
+        if (m_pageLayout != PageLayout::Continuous)
+            setPageLayout(PageLayout::Continuous);
+    }
+    for (QLabel *label : m_pageLabels) {
+        label->setCursor(enabled ? Qt::OpenHandCursor
+                                 : (m_selectionMode == SelectionMode::Region
+                                        ? Qt::CrossCursor
+                                        : Qt::PointingHandCursor));
+    }
+    rebuildPageLayout();
+    syncEditControls();
+}
+
+void PdfViewerWidget::showPageContextMenu(int pageIndex, const QPoint &globalPosition)
+{
+    if (pageIndex < 0 || pageIndex >= m_pageLabels.size())
+        return;
+    if (!m_selectedPages.contains(pageIndex)) {
+        m_selectedPages = {pageIndex};
+        m_pageSelectionAnchor = pageIndex;
+        setCurrentPageFromPointer(pageIndex);
+        updateSelectionOverlays();
+    }
+
+    QMenu menu(this);
+    QAction *cutAction = menu.addAction(tr("Cut"));
+    cutAction->setShortcut(QKeySequence::Cut);
+    QAction *copyAction = menu.addAction(tr("Copy"));
+    copyAction->setShortcut(QKeySequence::Copy);
+    menu.addSeparator();
+    QAction *extractAction = menu.addAction(tr("Extract PDF…"));
+    const bool canCopy = m_valid && !m_transformInProgress && !m_saveInProgress
+                         && !m_selectedPages.isEmpty();
+    copyAction->setEnabled(canCopy);
+    cutAction->setEnabled(canCopy && m_selectedPages.size() < m_pageLabels.size());
+    extractAction->setEnabled(canCopy);
+
+    QAction *selectedAction = menu.exec(globalPosition);
+    if (selectedAction == cutAction)
+        copySelectedPages(/*cut=*/true);
+    else if (selectedAction == copyAction)
+        copySelectedPages(/*cut=*/false);
+    else if (selectedAction == extractAction)
+        extractSelectedPages();
+}
+
+void PdfViewerWidget::showInsertionContextMenu(int insertionIndex,
+                                               const QPoint &globalPosition)
+{
+    if (insertionIndex < 0 || insertionIndex > m_pageLabels.size())
+        return;
+
+    QMenu menu(this);
+    QAction *blankAction = menu.addAction(tr("Add Blank Page"));
+    QAction *pasteAction = menu.addAction(tr("Paste"));
+    QAction *insertPdfAction = menu.addAction(tr("Insert from PDF…"));
+    const bool canEdit = m_valid && !m_transformInProgress && !m_saveInProgress;
+    blankAction->setEnabled(canEdit);
+    pasteAction->setEnabled(canEdit && g_pageClipboard.pageCount > 0
+                            && !g_pageClipboard.pageArchive.isEmpty());
+    insertPdfAction->setEnabled(canEdit);
+
+    QAction *selectedAction = menu.exec(globalPosition);
+    if (selectedAction == blankAction)
+        insertBlankPageAt(insertionIndex);
+    else if (selectedAction == pasteAction)
+        pastePagesAt(insertionIndex);
+    else if (selectedAction == insertPdfAction)
+        insertPdfAt(insertionIndex);
+}
+
+void PdfViewerWidget::startSelectedPageDrag(QLabel *sourceLabel)
+{
+    if (!sourceLabel || !m_organizePagesEnabled || m_selectedPages.isEmpty()
+        || m_transformInProgress || m_saveInProgress) {
+        return;
+    }
+
+    auto *drag = new QDrag(sourceLabel);
+    auto *mimeData = new QMimeData;
+    mimeData->setData(kPageDragMimeType,
+                      QByteArray::number(reinterpret_cast<quintptr>(this), 16));
+    drag->setMimeData(mimeData);
+    QPixmap preview = sourceLabel->pixmap();
+    if (!preview.isNull()) {
+        preview = preview.scaled(160, 200, Qt::KeepAspectRatio,
+                                 Qt::SmoothTransformation);
+        drag->setPixmap(preview);
+        drag->setHotSpot(preview.rect().center());
+    }
+
+    setPlaceholderDragActive(true);
+    sourceLabel->setCursor(Qt::ClosedHandCursor);
+    drag->exec(Qt::MoveAction);
+    sourceLabel->setCursor(Qt::OpenHandCursor);
+    setPlaceholderDragActive(false);
+}
+
+void PdfViewerWidget::setPlaceholderDragActive(bool active)
+{
+    for (PdfInsertionPlaceholder *placeholder : m_pagePlaceholders)
+        placeholder->setDragActive(active);
+}
+
+void PdfViewerWidget::moveSelectedPagesTo(int insertionIndex)
+{
+    if (!m_valid || m_transformInProgress || m_saveInProgress
+        || insertionIndex < 0 || insertionIndex > m_pageIds.size()
+        || m_selectedPages.isEmpty()) {
+        return;
+    }
+
+    QVector<int> selectedIndexes(m_selectedPages.cbegin(), m_selectedPages.cend());
+    std::sort(selectedIndexes.begin(), selectedIndexes.end());
+    QVector<quint64> movingPageIds;
+    movingPageIds.reserve(selectedIndexes.size());
+    for (const int pageIndex : selectedIndexes)
+        movingPageIds.append(m_pageIds.at(pageIndex));
+
+    QVector<quint64> targetPageIds = m_pageIds;
+    for (int index = selectedIndexes.size() - 1; index >= 0; --index)
+        targetPageIds.removeAt(selectedIndexes.at(index));
+    int adjustedInsertionIndex = insertionIndex;
+    for (const int selectedIndex : selectedIndexes) {
+        if (selectedIndex < insertionIndex)
+            --adjustedInsertionIndex;
+    }
+    adjustedInsertionIndex = qBound(0, adjustedInsertionIndex, targetPageIds.size());
+    for (int offset = 0; offset < movingPageIds.size(); ++offset)
+        targetPageIds.insert(adjustedInsertionIndex + offset, movingPageIds.at(offset));
+    if (targetPageIds == m_pageIds)
+        return;
+
+    applyPageStructureChange(tr("Move pages"), m_pageIds, targetPageIds,
+                             {}, {}, movingPageIds);
+}
+
+void PdfViewerWidget::copySelectedPages(bool cut)
+{
+    if (!m_valid || m_transformInProgress || m_saveInProgress
+        || m_selectedPages.isEmpty()
+        || (cut && m_selectedPages.size() >= m_pageLabels.size())) {
+        return;
+    }
+
+    QVector<int> selectedIndexes(m_selectedPages.cbegin(), m_selectedPages.cend());
+    std::sort(selectedIndexes.begin(), selectedIndexes.end());
+    QVector<quint64> selectedPageIds;
+    selectedPageIds.reserve(selectedIndexes.size());
+    for (const int pageIndex : selectedIndexes)
+        selectedPageIds.append(m_pageIds.at(pageIndex));
+
+    m_transformInProgress = true;
+    emit operationInProgressChanged(true);
+    syncEditControls();
+    const std::shared_ptr<PdfDocument> document = m_document;
+    const QPointer<PdfViewerWidget> weakSelf(this);
+    const QVector<quint64> beforePageIds = m_pageIds;
+    QThread *thread = QThread::create(
+        [weakSelf, document, selectedIndexes, selectedPageIds, beforePageIds, cut]() {
+            const QByteArray pageArchive = document->exportPages(selectedIndexes);
+            QMetaObject::invokeMethod(
+                qApp,
+                [weakSelf, pageArchive, selectedPageIds, beforePageIds, cut]() {
+                    if (!weakSelf)
+                        return;
+                    weakSelf->m_transformInProgress = false;
+                    emit weakSelf->operationInProgressChanged(false);
+                    weakSelf->syncEditControls();
+                    if (pageArchive.isEmpty()) {
+                        QMessageBox::warning(
+                            weakSelf, viewerText("Copy Pages"),
+                            viewerText("The selected pages could not be copied."));
+                        return;
+                    }
+                    g_pageClipboard = {
+                        pageArchive, static_cast<int>(selectedPageIds.size())};
+                    if (!cut) {
+                        weakSelf->finishPageCopy(pageArchive, selectedPageIds.size());
+                        return;
+                    }
+
+                    QVector<quint64> targetPageIds = beforePageIds;
+                    for (const quint64 pageId : selectedPageIds)
+                        targetPageIds.removeOne(pageId);
+                    QVector<quint64> nextSelection;
+                    if (!targetPageIds.isEmpty()) {
+                        const int selectionIndex = qMin(
+                            beforePageIds.indexOf(selectedPageIds.first()),
+                            targetPageIds.size() - 1);
+                        nextSelection.append(targetPageIds.at(selectionIndex));
+                    }
+                    weakSelf->applyPageStructureChange(
+                        viewerText("Cut pages"), beforePageIds, targetPageIds,
+                        selectedPageIds, pageArchive, nextSelection);
+                },
+                Qt::QueuedConnection);
+        });
+    connect(thread, &QThread::finished, thread, &QThread::deleteLater);
+    thread->start();
+}
+
+void PdfViewerWidget::finishPageCopy(const QByteArray &pageArchive, int pageCount)
+{
+    if (!pageArchive.isEmpty() && pageCount > 0)
+        g_pageClipboard = {pageArchive, pageCount};
+}
+
+void PdfViewerWidget::extractSelectedPages()
+{
+    if (!m_valid || m_transformInProgress || m_saveInProgress
+        || m_selectionMode != SelectionMode::Page || m_selectedPages.isEmpty()) {
+        return;
+    }
+
+    QVector<int> selectedIndexes(m_selectedPages.cbegin(), m_selectedPages.cend());
+    std::sort(selectedIndexes.begin(), selectedIndexes.end());
+
+    const QFileInfo sourceInfo(m_filePath);
+    const QString suggestedPath = QDir(sourceInfo.absolutePath()).filePath(
+        sourceInfo.completeBaseName() + QStringLiteral("_pages.pdf"));
+    QString targetPath = QFileDialog::getSaveFileName(
+        this, tr("Extract Pages"), suggestedPath, tr("PDF files (*.pdf)"));
+    if (targetPath.isEmpty())
+        return;
+    if (QFileInfo(targetPath).suffix().isEmpty())
+        targetPath += QStringLiteral(".pdf");
+
+    const QFileInfo targetInfo(targetPath);
+    const QString sourceIdentity = sourceInfo.canonicalFilePath().isEmpty()
+                                       ? sourceInfo.absoluteFilePath()
+                                       : sourceInfo.canonicalFilePath();
+    const QString targetIdentity = targetInfo.canonicalFilePath().isEmpty()
+                                       ? targetInfo.absoluteFilePath()
+                                       : targetInfo.canonicalFilePath();
+    if (sourceIdentity == targetIdentity) {
+        QMessageBox::warning(
+            this, tr("Extract Pages"),
+            tr("Choose a different file so the open PDF is not overwritten."));
+        return;
+    }
+
+    m_transformInProgress = true;
+    emit operationInProgressChanged(true);
+    syncEditControls();
+    const std::shared_ptr<PdfDocument> document = m_document;
+    const QPointer<PdfViewerWidget> weakSelf(this);
+    QThread *thread = QThread::create(
+        [weakSelf, document, selectedIndexes, targetPath]() {
+            const QByteArray pageArchive = document->exportPages(selectedIndexes);
+            bool success = false;
+            QString errorMessage;
+            if (!pageArchive.isEmpty()) {
+                QSaveFile output(targetPath);
+                if (!output.open(QIODevice::WriteOnly)) {
+                    errorMessage = output.errorString();
+                } else if (output.write(pageArchive) != pageArchive.size()) {
+                    errorMessage = output.errorString();
+                    output.cancelWriting();
+                } else if (!output.commit()) {
+                    errorMessage = output.errorString();
+                } else {
+                    success = true;
+                }
+            }
+
+            QMetaObject::invokeMethod(
+                qApp,
+                [weakSelf, success, errorMessage]() {
+                    if (!weakSelf)
+                        return;
+                    weakSelf->m_transformInProgress = false;
+                    emit weakSelf->operationInProgressChanged(false);
+                    weakSelf->syncEditControls();
+                    if (!success) {
+                        QString message = viewerText(
+                            "The selected pages could not be extracted.");
+                        if (!errorMessage.isEmpty())
+                            message += QStringLiteral("\n\n") + errorMessage;
+                        QMessageBox::warning(
+                            weakSelf, viewerText("Extract Pages"), message);
+                    }
+                },
+                Qt::QueuedConnection);
+        });
+    connect(thread, &QThread::finished, thread, &QThread::deleteLater);
+    thread->start();
+}
+
+void PdfViewerWidget::insertBlankPageAt(int insertionIndex)
+{
+    const int referenceIndex = insertionIndex > 0 ? insertionIndex - 1 : 0;
+    const QByteArray pageArchive = PdfDocument::createBlankPageArchive(
+        pageSize(referenceIndex));
+    if (pageArchive.isEmpty()) {
+        QMessageBox::warning(this, tr("Add Blank Page"),
+                             tr("The blank page could not be created."));
+        return;
+    }
+    insertArchiveAt(insertionIndex, pageArchive, 1, tr("Add blank page"));
+}
+
+void PdfViewerWidget::pastePagesAt(int insertionIndex)
+{
+    if (g_pageClipboard.pageArchive.isEmpty() || g_pageClipboard.pageCount <= 0)
+        return;
+    insertArchiveAt(insertionIndex, g_pageClipboard.pageArchive,
+                    g_pageClipboard.pageCount, tr("Paste pages"));
+}
+
+void PdfViewerWidget::insertPdfAt(int insertionIndex)
+{
+    const QString sourcePath = QFileDialog::getOpenFileName(
+        this, tr("Insert from PDF"), QString(), tr("PDF files (*.pdf)"));
+    if (sourcePath.isEmpty())
+        return;
+
+    m_transformInProgress = true;
+    emit operationInProgressChanged(true);
+    syncEditControls();
+    const QPointer<PdfViewerWidget> weakSelf(this);
+    QThread *thread = QThread::create([weakSelf, sourcePath, insertionIndex]() {
+        PdfDocument sourceDocument(sourcePath);
+        QVector<int> pageIndexes;
+        if (sourceDocument.isValid()) {
+            pageIndexes.reserve(sourceDocument.pageCount());
+            for (int pageIndex = 0; pageIndex < sourceDocument.pageCount(); ++pageIndex)
+                pageIndexes.append(pageIndex);
+        }
+        const QByteArray pageArchive = sourceDocument.exportPages(pageIndexes);
+        QMetaObject::invokeMethod(
+            qApp,
+            [weakSelf, insertionIndex, pageArchive, pageCount = pageIndexes.size()]() {
+                if (!weakSelf)
+                    return;
+                weakSelf->m_transformInProgress = false;
+                emit weakSelf->operationInProgressChanged(false);
+                weakSelf->syncEditControls();
+                if (pageArchive.isEmpty() || pageCount <= 0) {
+                    QMessageBox::warning(
+                        weakSelf, viewerText("Insert from PDF"),
+                        viewerText("The selected PDF could not be inserted."));
+                    return;
+                }
+                weakSelf->insertArchiveAt(
+                    insertionIndex, pageArchive, pageCount,
+                    viewerText("Insert pages from PDF"));
+            },
+            Qt::QueuedConnection);
+    });
+    connect(thread, &QThread::finished, thread, &QThread::deleteLater);
+    thread->start();
+}
+
+void PdfViewerWidget::insertArchiveAt(int insertionIndex,
+                                      const QByteArray &pageArchive,
+                                      int pageCount, const QString &description)
+{
+    if (!m_valid || m_transformInProgress || m_saveInProgress
+        || insertionIndex < 0 || insertionIndex > m_pageIds.size()
+        || pageArchive.isEmpty() || pageCount <= 0) {
+        return;
+    }
+
+    QVector<quint64> insertedPageIds;
+    insertedPageIds.reserve(pageCount);
+    for (int pageIndex = 0; pageIndex < pageCount; ++pageIndex)
+        insertedPageIds.append(m_nextPageId++);
+    QVector<quint64> targetPageIds = m_pageIds;
+    for (int offset = 0; offset < insertedPageIds.size(); ++offset)
+        targetPageIds.insert(insertionIndex + offset, insertedPageIds.at(offset));
+    applyPageStructureChange(description, m_pageIds, targetPageIds,
+                             insertedPageIds, pageArchive, insertedPageIds);
+}
+
+void PdfViewerWidget::applyPageStructureChange(
+    const QString &description, const QVector<quint64> &beforePageIds,
+    const QVector<quint64> &afterPageIds,
+    const QVector<quint64> &archivedPageIds, const QByteArray &pageArchive,
+    const QVector<quint64> &selectedPageIds)
+{
+    if (!m_valid || m_transformInProgress || m_saveInProgress
+        || beforePageIds != m_pageIds || afterPageIds.isEmpty()) {
+        return;
+    }
+
+    EditHistoryEntry historyEntry;
+    historyEntry.description = description;
+    historyEntry.beforePageIds = beforePageIds;
+    historyEntry.afterPageIds = afterPageIds;
+    historyEntry.archivedPageIds = archivedPageIds;
+    historyEntry.pageArchive = pageArchive;
+
+    m_transformInProgress = true;
+    emit operationInProgressChanged(true);
+    ++m_documentRevision;
+    m_pagesLoading.clear();
+    syncEditControls();
+
+    const std::shared_ptr<PdfDocument> document = m_document;
+    const QPointer<PdfViewerWidget> weakSelf(this);
+    QThread *thread = QThread::create(
+        [weakSelf, document, historyEntry, selectedPageIds]() {
+            const bool restored = document->restorePageStructure(
+                historyEntry.beforePageIds, historyEntry.afterPageIds,
+                historyEntry.archivedPageIds, historyEntry.pageArchive);
+            const QVector<QSizeF> pageSizes = restored ? document->allPageSizes()
+                                                       : QVector<QSizeF>();
+            QMetaObject::invokeMethod(
+                qApp,
+                [weakSelf, restored, pageSizes, historyEntry, selectedPageIds]() {
+                    if (weakSelf) {
+                        weakSelf->finishPageStructureChange(
+                            restored, pageSizes, historyEntry, selectedPageIds);
+                    }
+                },
+                Qt::QueuedConnection);
+        });
+    connect(thread, &QThread::finished, thread, &QThread::deleteLater);
+    thread->start();
+}
+
+void PdfViewerWidget::finishPageStructureChange(
+    bool success, const QVector<QSizeF> &pageSizes,
+    const EditHistoryEntry &historyEntry,
+    const QVector<quint64> &selectedPageIds)
+{
+    m_transformInProgress = false;
+    emit operationInProgressChanged(false);
+    success = success && pageSizes.size() == historyEntry.afterPageIds.size();
+    if (success) {
+        rebuildPagesAfterStructure(pageSizes, historyEntry.afterPageIds,
+                                   selectedPageIds);
+        recordHistoryEntry(historyEntry);
+    } else {
+        qWarning() << "Failed to change PDF page structure in memory:" << m_filePath;
+        syncEditControls();
+        QTimer::singleShot(0, this, &PdfViewerWidget::renderVisiblePages);
+    }
+}
+
+void PdfViewerWidget::rebuildPagesAfterStructure(
+    const QVector<QSizeF> &pageSizes, const QVector<quint64> &pageIds,
+    const QVector<quint64> &selectedPageIds)
+{
+    qDeleteAll(m_pagePlaceholders);
+    m_pagePlaceholders.clear();
+    qDeleteAll(m_pageLabels);
+    m_pageLabels.clear();
+    m_renderedWidths.clear();
+    m_pagesLoading.clear();
+    m_pageSizes = pageSizes;
+    m_pageIds = pageIds;
+    buildPageLabels(pageSizes.size());
+    buildInsertionPlaceholders();
+
+    m_selectedPages.clear();
+    for (const quint64 pageId : selectedPageIds) {
+        const int pageIndex = m_pageIds.indexOf(pageId);
+        if (pageIndex >= 0)
+            m_selectedPages.insert(pageIndex);
+    }
+    if (m_selectedPages.isEmpty() && !m_pageIds.isEmpty())
+        m_selectedPages.insert(qBound(0, m_currentPageIndex, m_pageIds.size() - 1));
+    QVector<int> sortedSelection(m_selectedPages.cbegin(), m_selectedPages.cend());
+    std::sort(sortedSelection.begin(), sortedSelection.end());
+    m_currentPageIndex = sortedSelection.isEmpty() ? 0 : sortedSelection.first();
+    m_pageSelectionAnchor = m_currentPageIndex;
+    m_regionPageIndex = -1;
+    m_regionSelection = {};
+
+    if (m_pageSpinBox) {
+        m_pageSpinBox->setRange(1, m_pageIds.size());
+        m_pageCountLabel->setText(QStringLiteral("/ %1").arg(m_pageIds.size()));
+    }
+    setSelectionMode(SelectionMode::Page);
+    applyZoom();
+    syncNavigationControls();
+    QTimer::singleShot(0, this, &PdfViewerWidget::renderVisiblePages);
 }
 
 void PdfViewerWidget::applyPageSelectionCommand(int commandIndex)
@@ -1283,6 +2017,9 @@ void PdfViewerWidget::updateSelectionOverlays()
 
 void PdfViewerWidget::syncEditControls()
 {
+    const bool canEditPages = m_valid && !m_transformInProgress && !m_saveInProgress
+                              && m_selectionMode == SelectionMode::Page
+                              && !m_selectedPages.isEmpty();
     const bool canRotate = m_valid && !m_transformInProgress
                            && m_selectionMode == SelectionMode::Page
                            && !m_selectedPages.isEmpty();
@@ -1295,6 +2032,15 @@ void PdfViewerWidget::syncEditControls()
         m_rotateClockwiseButton->setEnabled(canRotate);
     if (m_cropButton)
         m_cropButton->setEnabled(canCrop);
+    if (m_organizePagesButton)
+        m_organizePagesButton->setEnabled(m_valid && !m_transformInProgress);
+    if (m_cutPagesAction)
+        m_cutPagesAction->setEnabled(canEditPages
+                                     && m_selectedPages.size() < m_pageLabels.size());
+    if (m_copyPagesAction)
+        m_copyPagesAction->setEnabled(canEditPages);
+    if (m_extractPagesAction)
+        m_extractPagesAction->setEnabled(canEditPages);
 }
 
 void PdfViewerWidget::rotateSelectedPages(bool clockwise)
@@ -1495,6 +2241,45 @@ void PdfViewerWidget::navigateHistory(bool redoOperation)
     const int targetHistoryPosition = redoOperation ? m_historyPosition + 1
                                                     : m_historyPosition - 1;
     const EditHistoryEntry &entry = m_editHistory.at(entryIndex);
+    if (entry.changesPageStructure()) {
+        const QVector<quint64> targetPageIds = redoOperation ? entry.afterPageIds
+                                                             : entry.beforePageIds;
+        const QVector<quint64> currentPageIds = m_pageIds;
+        const QVector<quint64> archivedPageIds = entry.archivedPageIds;
+        const QByteArray pageArchive = entry.pageArchive;
+
+        m_transformInProgress = true;
+        emit operationInProgressChanged(true);
+        ++m_documentRevision;
+        m_pagesLoading.clear();
+        syncEditControls();
+
+        const std::shared_ptr<PdfDocument> document = m_document;
+        const QPointer<PdfViewerWidget> weakSelf(this);
+        QThread *thread = QThread::create(
+            [weakSelf, document, currentPageIds, targetPageIds,
+             archivedPageIds, pageArchive, targetHistoryPosition]() {
+                const bool restored = document->restorePageStructure(
+                    currentPageIds, targetPageIds, archivedPageIds, pageArchive);
+                const QVector<QSizeF> pageSizes = restored ? document->allPageSizes()
+                                                           : QVector<QSizeF>();
+                QMetaObject::invokeMethod(
+                    qApp,
+                    [weakSelf, restored, pageSizes, targetPageIds,
+                     targetHistoryPosition]() {
+                        if (weakSelf) {
+                            weakSelf->finishStructureHistoryNavigation(
+                                restored, pageSizes, targetPageIds,
+                                targetHistoryPosition);
+                        }
+                    },
+                    Qt::QueuedConnection);
+            });
+        connect(thread, &QThread::finished, thread, &QThread::deleteLater);
+        thread->start();
+        return;
+    }
+
     const QVector<PdfPageState> states = redoOperation ? entry.afterStates
                                                        : entry.beforeStates;
     QVector<int> affectedPages;
@@ -1527,6 +2312,25 @@ void PdfViewerWidget::navigateHistory(bool redoOperation)
         });
     connect(thread, &QThread::finished, thread, &QThread::deleteLater);
     thread->start();
+}
+
+void PdfViewerWidget::finishStructureHistoryNavigation(
+    bool success, const QVector<QSizeF> &pageSizes,
+    const QVector<quint64> &targetPageIds, int targetHistoryPosition)
+{
+    m_transformInProgress = false;
+    emit operationInProgressChanged(false);
+    success = success && pageSizes.size() == targetPageIds.size();
+    if (success) {
+        m_historyPosition = targetHistoryPosition;
+        rebuildPagesAfterStructure(pageSizes, targetPageIds, {});
+        updateModifiedState();
+    } else {
+        qWarning() << "Failed to restore PDF page structure history:" << m_filePath;
+        syncEditControls();
+        QTimer::singleShot(0, this, &PdfViewerWidget::renderVisiblePages);
+    }
+    emit historyChanged();
 }
 
 void PdfViewerWidget::finishHistoryNavigation(bool success,
@@ -1684,6 +2488,13 @@ bool PdfViewerWidget::eventFilter(QObject *watched, QEvent *event)
         const int pageIndex = pageIndexProperty.toInt();
         auto *label = static_cast<PdfPageLabel *>(watched);
 
+        if (event->type() == QEvent::ContextMenu
+            && m_selectionMode == SelectionMode::Page) {
+            auto *contextEvent = static_cast<QContextMenuEvent *>(event);
+            showPageContextMenu(pageIndex, contextEvent->globalPos());
+            return true;
+        }
+
         if (event->type() == QEvent::MouseButtonPress) {
             auto *mouseEvent = static_cast<QMouseEvent *>(event);
             if (mouseEvent->button() != Qt::LeftButton)
@@ -1708,11 +2519,16 @@ bool PdfViewerWidget::eventFilter(QObject *watched, QEvent *event)
                     else
                         m_selectedPages.insert(pageIndex);
                     m_pageSelectionAnchor = pageIndex;
-                } else {
+                } else if (!(m_organizePagesEnabled
+                             && m_selectedPages.contains(pageIndex))) {
                     m_selectedPages = {pageIndex};
                     m_pageSelectionAnchor = pageIndex;
                 }
                 updateSelectionOverlays();
+                if (m_organizePagesEnabled) {
+                    m_pageDragStart = mouseEvent->position().toPoint();
+                    m_pageDragSourceIndex = pageIndex;
+                }
             } else {
                 m_regionPageIndex = pageIndex;
                 m_regionDragStart = normalizedPagePosition(label, mouseEvent->position());
@@ -1721,6 +2537,19 @@ bool PdfViewerWidget::eventFilter(QObject *watched, QEvent *event)
                 updateSelectionOverlays();
             }
             return true;
+        }
+
+        if (event->type() == QEvent::MouseMove
+            && m_selectionMode == SelectionMode::Page && m_organizePagesEnabled
+            && m_pageDragSourceIndex == pageIndex) {
+            auto *mouseEvent = static_cast<QMouseEvent *>(event);
+            if (mouseEvent->buttons().testFlag(Qt::LeftButton)
+                && (mouseEvent->position().toPoint() - m_pageDragStart).manhattanLength()
+                       >= QApplication::startDragDistance()) {
+                m_pageDragSourceIndex = -1;
+                startSelectedPageDrag(label);
+                return true;
+            }
         }
 
         if (event->type() == QEvent::MouseMove && m_selectionMode == SelectionMode::Region
@@ -1746,6 +2575,10 @@ bool PdfViewerWidget::eventFilter(QObject *watched, QEvent *event)
             }
             updateSelectionOverlays();
             return true;
+        }
+        if (event->type() == QEvent::MouseButtonRelease
+            && m_selectionMode == SelectionMode::Page) {
+            m_pageDragSourceIndex = -1;
         }
     }
 

@@ -58,6 +58,7 @@ private:
     void showAboutDialog();
     void showPreferences();
     void showTips();
+    void showMergePdfDialog();
     void saveCurrentDocument();
     void openExplorerTab();
     void closeAllTabs();
@@ -88,6 +89,7 @@ private:
     void setupViewModeMenu();
     void setupSortMenu();
     void setupEditMenu();
+    void setupToolsMenu();
     void setupWindowMenu();
     void applyContentViewMode(AppSettings::ContentViewMode mode);
     void updateStatusBarForCurrentTab();
@@ -110,6 +112,7 @@ private:
     QAction *m_redoAction = nullptr;
     QMenu *m_editMenu = nullptr;
     QMenu *m_sortMenuBar = nullptr;
+    QMenu *m_toolsMenu = nullptr;
     QMenu *m_windowMenu = nullptr;
     QAction *m_closeAllTabsAction = nullptr;
     QAction *m_closeOtherTabsAction = nullptr;

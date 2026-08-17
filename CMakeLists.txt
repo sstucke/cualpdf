@@ -85,6 +85,8 @@ qt_add_executable(cualpdf
     src/mainwindow.cpp
     src/mainwindow.h
     src/mainwindow.ui
+    src/mergepdfdialog.cpp
+    src/mergepdfdialog.h
     src/pdfdocument.cpp
     src/pdfdocument.h
     src/foldercontentmodel.cpp
@@ -107,6 +109,41 @@ qt_add_executable(cualpdf
 
 target_link_libraries(cualpdf PRIVATE Qt6::Widgets pdfium)
 target_include_directories(cualpdf PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+
+include(CTest)
+if(BUILD_TESTING)
+    add_executable(cualpdf_pdfdocument_structure_test
+        tests/pdfdocument_structure_test.cpp
+        src/pdfdocument.cpp
+        src/pdfdocument.h
+    )
+    target_include_directories(cualpdf_pdfdocument_structure_test PRIVATE
+        "${CMAKE_SOURCE_DIR}/src"
+    )
+    target_link_libraries(cualpdf_pdfdocument_structure_test PRIVATE
+        Qt6::Widgets
+        pdfium
+    )
+    if(WIN32)
+        add_custom_command(TARGET cualpdf_pdfdocument_structure_test POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${pdfium_SOURCE_DIR}/bin/pdfium.dll"
+                "$<TARGET_FILE_DIR:cualpdf_pdfdocument_structure_test>"
+        )
+    elseif(APPLE)
+        add_custom_command(TARGET cualpdf_pdfdocument_structure_test POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${pdfium_SOURCE_DIR}/lib/libpdfium.dylib"
+                "$<TARGET_FILE_DIR:cualpdf_pdfdocument_structure_test>"
+        )
+    else()
+        set_target_properties(cualpdf_pdfdocument_structure_test PROPERTIES
+            BUILD_RPATH "${pdfium_SOURCE_DIR}/lib"
+        )
+    endif()
+    add_test(NAME pdfdocument_structure
+             COMMAND cualpdf_pdfdocument_structure_test)
+endif()
 
 set_target_properties(cualpdf PROPERTIES
     WIN32_EXECUTABLE ON

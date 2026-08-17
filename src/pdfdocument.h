@@ -1,9 +1,11 @@
 #pragma once
 
+#include <QByteArray>
 #include <QImage>
 #include <QMarginsF>
 #include <QSizeF>
 #include <QString>
+#include <QStringList>
 #include <QVector>
 
 struct PdfPageState {
@@ -48,9 +50,18 @@ public:
     bool cropPages(const QVector<int> &pageIndexes, const QMarginsF &marginsPoints);
     QVector<PdfPageState> pageStates(const QVector<int> &pageIndexes) const;
     bool restorePageStates(const QVector<PdfPageState> &states);
+    QByteArray exportPages(const QVector<int> &pageIndexes) const;
+    static QByteArray createBlankPageArchive(const QSizeF &pageSize);
+    static bool mergeFiles(const QStringList &inputPaths, const QString &outputPath,
+                           QString *failedInputPath, QString *fileErrorMessage);
+    bool restorePageStructure(const QVector<quint64> &currentPageIds,
+                              const QVector<quint64> &targetPageIds,
+                              const QVector<quint64> &archivedPageIds,
+                              const QByteArray &pageArchive);
     bool saveSafely(const QString &filePath, bool createTimestampedBackup,
                     int backupVersionLimit, QString *errorMessage);
 
 private:
     void *m_document = nullptr; // FPDF_DOCUMENT
+    QByteArray m_memoryData;
 };
