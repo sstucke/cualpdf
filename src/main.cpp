@@ -1,3 +1,4 @@
+#include "appversion.h"
 #include "logger.h"
 #include "mainwindow.h"
 #include "pdfdocument.h"
@@ -13,7 +14,7 @@ int main(int argc, char *argv[])
     QApplication application(argc, argv);
     QApplication::setOrganizationName("cualpdf");
     QApplication::setApplicationName("cualpdf");
-    QApplication::setApplicationVersion("0.1.0");
+    QApplication::setApplicationVersion(QString::fromUtf8(AppVersion::value));
 
     Logger::install();
 

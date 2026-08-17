@@ -1,0 +1,5 @@
+#pragma once
+
+namespace AppVersion {
+inline constexpr auto value = "@CUALPDF_VERSION@";
+}

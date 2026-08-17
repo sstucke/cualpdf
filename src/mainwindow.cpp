@@ -210,6 +210,7 @@ MainWindow::MainWindow(QWidget *parent)
     connect(ui->actionZoomIn, &QAction::triggered, this, &MainWindow::zoomIn);
     connect(ui->actionZoomOut, &QAction::triggered, this, &MainWindow::zoomOut);
     connect(ui->actionResetZoom, &QAction::triggered, this, &MainWindow::resetZoom);
+    ui->actionAbout->setMenuRole(QAction::AboutRole);
     connect(ui->actionAbout, &QAction::triggered, this, &MainWindow::showAboutDialog);
 
     m_saveAction = new QAction(tr("Save"), this);
@@ -674,8 +675,13 @@ void MainWindow::updateStatusBarForCurrentTab()
 void MainWindow::showAboutDialog()
 {
     QMessageBox::about(this, tr("About cualpdf"),
-                        tr("%1 %2\nA fast, lightweight, open-source PDF editor.")
-                            .arg(QCoreApplication::applicationName(), QCoreApplication::applicationVersion()));
+                       tr("%1\nVersion %2\n\n"
+                          "A fast, lightweight, open-source PDF editor.\n\n"
+                          "Copyright © cualpdf contributors.\n"
+                          "Licensed under the Apache License 2.0.\n\n"
+                          "https://github.com/sstucke/cualpdf")
+                           .arg(QCoreApplication::applicationName(),
+                                QCoreApplication::applicationVersion()));
 }
 
 void MainWindow::showPreferences()

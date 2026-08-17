@@ -247,8 +247,8 @@
     </message>
     <message>
         <location filename="../src/mainwindow.ui" line="486"/>
-        <source>&amp;About cualpdf</source>
-        <translation>&amp;Acerca de cualpdf</translation>
+        <source>&amp;About</source>
+        <translation>&amp;Acerca de</translation>
     </message>
     <message>
         <location filename="../src/mainwindow.cpp" line="72"/>
@@ -326,10 +326,24 @@
     </message>
     <message>
         <location filename="../src/mainwindow.cpp" line="347"/>
-        <source>%1 %2
-A fast, lightweight, open-source PDF editor.</source>
-        <translation>%1 %2
-Un editor de PDF rápido, liviano y de código abierto.</translation>
+        <source>%1
+Version %2
+
+A fast, lightweight, open-source PDF editor.
+
+Copyright © cualpdf contributors.
+Licensed under the Apache License 2.0.
+
+https://github.com/sstucke/cualpdf</source>
+        <translation>%1
+Versión %2
+
+Un editor de PDF rápido, liviano y de código abierto.
+
+Copyright © colaboradores de cualpdf.
+Licenciado bajo la Licencia Apache 2.0.
+
+https://github.com/sstucke/cualpdf</translation>
     </message>
     <message numerus="yes">
         <location filename="../src/mainwindow.cpp" line="383"/>

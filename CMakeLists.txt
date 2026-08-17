@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(cualpdf VERSION 0.0.4 LANGUAGES CXX)
+project(cualpdf LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -10,6 +10,34 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
 
 find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets LinguistTools)
+
+set(CUALPDF_VERSION "development")
+if(DEFINED ENV{GITHUB_REF_TYPE} AND "$ENV{GITHUB_REF_TYPE}" STREQUAL "tag")
+    set(CUALPDF_VERSION "$ENV{GITHUB_REF_NAME}")
+else()
+    find_package(Git QUIET)
+    if(Git_FOUND)
+        execute_process(
+            COMMAND "${GIT_EXECUTABLE}" describe --tags --match "v[0-9]*" --always --dirty
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+            RESULT_VARIABLE CUALPDF_GIT_DESCRIBE_RESULT
+            OUTPUT_VARIABLE CUALPDF_GIT_DESCRIBE_OUTPUT
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+        )
+        if(CUALPDF_GIT_DESCRIBE_RESULT EQUAL 0 AND NOT CUALPDF_GIT_DESCRIBE_OUTPUT STREQUAL "")
+            set(CUALPDF_VERSION "${CUALPDF_GIT_DESCRIBE_OUTPUT}")
+        endif()
+    endif()
+endif()
+string(REGEX REPLACE "^v" "" CUALPDF_VERSION "${CUALPDF_VERSION}")
+message(STATUS "cualpdf version: ${CUALPDF_VERSION}")
+
+configure_file(
+    "${CMAKE_SOURCE_DIR}/src/appversion.h.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/appversion.h"
+    @ONLY
+)
 
 qt_standard_project_setup(I18N_TRANSLATED_LANGUAGES es)
 
@@ -78,6 +106,7 @@ qt_add_executable(cualpdf
 )
 
 target_link_libraries(cualpdf PRIVATE Qt6::Widgets pdfium)
+target_include_directories(cualpdf PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
 set_target_properties(cualpdf PROPERTIES
     WIN32_EXECUTABLE ON
