@@ -1,5 +1,7 @@
 #pragma once
 
+#include "pdfdocument.h"
+
 #include <QHash>
 #include <QRectF>
 #include <QSet>
@@ -10,7 +12,6 @@
 
 #include <memory>
 
-class PdfDocument;
 class QAction;
 class QComboBox;
 class QGridLayout;
@@ -35,6 +36,15 @@ public:
     bool isModified() const { return m_modified; }
     bool isSaveInProgress() const { return m_saveInProgress; }
     bool isOperationInProgress() const { return m_transformInProgress; }
+    bool canUndo() const
+    {
+        return !m_transformInProgress && !m_saveInProgress && m_historyPosition > 0;
+    }
+    bool canRedo() const
+    {
+        return !m_transformInProgress && !m_saveInProgress
+               && m_historyPosition < m_editHistory.size();
+    }
     QString filePath() const { return m_filePath; }
     int pageCount() const { return m_pageLabels.size(); }
     int currentPageIndex() const { return m_currentPageIndex; }
@@ -47,6 +57,8 @@ public slots:
     void goToPage(int pageIndex);
     void setZoomPercent(int percent);
     void saveDocument(bool createTimestampedBackup, int backupVersionLimit);
+    void undo();
+    void redo();
 
 signals:
     // Emitted once after the background load finishes (success or failure).
@@ -56,6 +68,7 @@ signals:
     void modifiedChanged(bool modified);
     void operationInProgressChanged(bool inProgress);
     void saveFinished(bool success, const QString &errorMessage);
+    void historyChanged();
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
@@ -65,6 +78,12 @@ private slots:
     void renderVisiblePages();
 
 private:
+    struct EditHistoryEntry {
+        QString description;
+        QVector<PdfPageState> beforeStates;
+        QVector<PdfPageState> afterStates;
+    };
+
     enum class PageLayout {
         Continuous,
         Discrete,
@@ -107,8 +126,14 @@ private:
     void cropSelectedRegion();
     void finishDocumentTransform(bool success, const QVector<QSizeF> &pageSizes,
                                  const QVector<int> &affectedPages, bool clearRegion,
-                                 const QString &historyDescription);
-    void recordHistoryEntry(const QString &description);
+                                 const QString &historyDescription,
+                                 const QVector<PdfPageState> &beforeStates,
+                                 const QVector<PdfPageState> &afterStates);
+    void recordHistoryEntry(EditHistoryEntry entry);
+    void navigateHistory(bool redoOperation);
+    void finishHistoryNavigation(bool success, const QVector<QSizeF> &pageSizes,
+                                 const QVector<int> &affectedPages,
+                                 int targetHistoryPosition);
     void updateModifiedState();
     void finishDocumentSave(bool success, const QString &errorMessage);
     void setCurrentPageFromPointer(int pageIndex);
@@ -169,7 +194,7 @@ private:
     bool m_transformInProgress = false;
     bool m_saveInProgress = false;
     bool m_modified = false;
-    QVector<QString> m_editHistory;
+    QVector<EditHistoryEntry> m_editHistory;
     int m_historyPosition = 0;
     int m_savedHistoryPosition = 0;
     int m_documentRevision = 0;
@@ -179,4 +204,6 @@ private:
     bool m_updatingControls = false;
     bool m_valid = false;
     int m_currentPageIndex = -1;
+
+    static constexpr int kHistoryLimit = 20;
 };

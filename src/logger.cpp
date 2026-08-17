@@ -53,7 +53,11 @@ static void crashHandler(int sig)
     if (g_logFile && g_logFile->isOpen()) {
         QTextStream out(g_logFile);
         out << QDateTime::currentDateTime().toString(Qt::ISODateWithMs) << " [FATAL] Crashed with signal "
-            << sig << " (" << strsignal(sig) << ")\n";
+            << sig;
+#ifndef Q_OS_WIN
+        out << " (" << strsignal(sig) << ")";
+#endif
+        out << "\n";
         out.flush();
     }
     logBacktrace();

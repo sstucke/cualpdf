@@ -1325,16 +1325,25 @@ void PdfViewerWidget::rotateSelectedPages(bool clockwise)
                                            : tr("Rotate pages counterclockwise");
     QThread *thread = QThread::create(
         [weakSelf, document, affectedPages, clockwise, historyDescription]() {
-            const bool success = document->rotatePages(affectedPages, clockwise);
+            const QVector<PdfPageState> beforeStates = document->pageStates(affectedPages);
+            const bool transformed = beforeStates.size() == affectedPages.size()
+                                     && document->rotatePages(affectedPages, clockwise);
+            const QVector<PdfPageState> afterStates = transformed
+                                                          ? document->pageStates(affectedPages)
+                                                          : QVector<PdfPageState>();
+            const bool success = transformed && afterStates.size() == affectedPages.size();
+            if (!success && beforeStates.size() == affectedPages.size())
+                document->restorePageStates(beforeStates);
             const QVector<QSizeF> pageSizes = success ? document->allPageSizes()
                                                       : QVector<QSizeF>();
             QMetaObject::invokeMethod(
                 qApp,
-                [weakSelf, success, pageSizes, affectedPages, historyDescription]() {
+                [weakSelf, success, pageSizes, affectedPages, historyDescription,
+                 beforeStates, afterStates]() {
                     if (weakSelf) {
                         weakSelf->finishDocumentTransform(
                             success, pageSizes, affectedPages, /*clearRegion=*/false,
-                            historyDescription);
+                            historyDescription, beforeStates, afterStates);
                     }
                 },
                 Qt::QueuedConnection);
@@ -1382,16 +1391,25 @@ void PdfViewerWidget::cropSelectedRegion()
     const QString historyDescription = tr("Crop pages");
     QThread *thread = QThread::create(
         [weakSelf, document, marginsPoints, affectedPages, historyDescription]() {
-        const bool success = document->cropPages(affectedPages, marginsPoints);
+        const QVector<PdfPageState> beforeStates = document->pageStates(affectedPages);
+        const bool transformed = beforeStates.size() == affectedPages.size()
+                                 && document->cropPages(affectedPages, marginsPoints);
+        const QVector<PdfPageState> afterStates = transformed
+                                                      ? document->pageStates(affectedPages)
+                                                      : QVector<PdfPageState>();
+        const bool success = transformed && afterStates.size() == affectedPages.size();
+        if (!success && beforeStates.size() == affectedPages.size())
+            document->restorePageStates(beforeStates);
         const QVector<QSizeF> pageSizes = success ? document->allPageSizes()
                                                   : QVector<QSizeF>();
         QMetaObject::invokeMethod(
             qApp,
-            [weakSelf, success, pageSizes, affectedPages, historyDescription]() {
+            [weakSelf, success, pageSizes, affectedPages, historyDescription,
+             beforeStates, afterStates]() {
                 if (weakSelf) {
                     weakSelf->finishDocumentTransform(
                         success, pageSizes, affectedPages, /*clearRegion=*/true,
-                        historyDescription);
+                        historyDescription, beforeStates, afterStates);
                 }
             },
             Qt::QueuedConnection);
@@ -1404,7 +1422,9 @@ void PdfViewerWidget::finishDocumentTransform(bool success,
                                               const QVector<QSizeF> &pageSizes,
                                               const QVector<int> &affectedPages,
                                               bool clearRegion,
-                                              const QString &historyDescription)
+                                              const QString &historyDescription,
+                                              const QVector<PdfPageState> &beforeStates,
+                                              const QVector<PdfPageState> &afterStates)
 {
     m_transformInProgress = false;
     emit operationInProgressChanged(false);
@@ -1422,7 +1442,7 @@ void PdfViewerWidget::finishDocumentTransform(bool success,
             m_regionPageIndex = -1;
             m_regionSelection = {};
         }
-        recordHistoryEntry(historyDescription);
+        recordHistoryEntry({historyDescription, beforeStates, afterStates});
         updateSelectionOverlays();
         applyZoom();
     } else {
@@ -1433,16 +1453,111 @@ void PdfViewerWidget::finishDocumentTransform(bool success,
     }
 }
 
-void PdfViewerWidget::recordHistoryEntry(const QString &description)
+void PdfViewerWidget::recordHistoryEntry(EditHistoryEntry entry)
 {
     if (m_historyPosition < m_editHistory.size()) {
         if (m_savedHistoryPosition > m_historyPosition)
             m_savedHistoryPosition = -1;
         m_editHistory.resize(m_historyPosition);
     }
-    m_editHistory.append(description);
+    m_editHistory.append(std::move(entry));
     m_historyPosition = m_editHistory.size();
+
+    if (m_editHistory.size() > kHistoryLimit) {
+        const int removedCount = m_editHistory.size() - kHistoryLimit;
+        m_editHistory.remove(0, removedCount);
+        m_historyPosition -= removedCount;
+        if (m_savedHistoryPosition >= 0) {
+            m_savedHistoryPosition -= removedCount;
+            if (m_savedHistoryPosition < 0)
+                m_savedHistoryPosition = -1;
+        }
+    }
     updateModifiedState();
+    emit historyChanged();
+}
+
+void PdfViewerWidget::undo()
+{
+    if (canUndo())
+        navigateHistory(/*redoOperation=*/false);
+}
+
+void PdfViewerWidget::redo()
+{
+    if (canRedo())
+        navigateHistory(/*redoOperation=*/true);
+}
+
+void PdfViewerWidget::navigateHistory(bool redoOperation)
+{
+    const int entryIndex = redoOperation ? m_historyPosition : m_historyPosition - 1;
+    const int targetHistoryPosition = redoOperation ? m_historyPosition + 1
+                                                    : m_historyPosition - 1;
+    const EditHistoryEntry &entry = m_editHistory.at(entryIndex);
+    const QVector<PdfPageState> states = redoOperation ? entry.afterStates
+                                                       : entry.beforeStates;
+    QVector<int> affectedPages;
+    affectedPages.reserve(states.size());
+    for (const PdfPageState &state : states)
+        affectedPages.append(state.pageIndex);
+
+    m_transformInProgress = true;
+    emit operationInProgressChanged(true);
+    ++m_documentRevision;
+    m_pagesLoading.clear();
+    syncEditControls();
+
+    const std::shared_ptr<PdfDocument> document = m_document;
+    const QPointer<PdfViewerWidget> weakSelf(this);
+    QThread *thread = QThread::create(
+        [weakSelf, document, states, affectedPages, targetHistoryPosition]() {
+            const bool restored = document->restorePageStates(states);
+            const QVector<QSizeF> pageSizes = restored ? document->allPageSizes()
+                                                       : QVector<QSizeF>();
+            QMetaObject::invokeMethod(
+                qApp,
+                [weakSelf, restored, pageSizes, affectedPages, targetHistoryPosition]() {
+                    if (weakSelf) {
+                        weakSelf->finishHistoryNavigation(
+                            restored, pageSizes, affectedPages, targetHistoryPosition);
+                    }
+                },
+                Qt::QueuedConnection);
+        });
+    connect(thread, &QThread::finished, thread, &QThread::deleteLater);
+    thread->start();
+}
+
+void PdfViewerWidget::finishHistoryNavigation(bool success,
+                                              const QVector<QSizeF> &pageSizes,
+                                              const QVector<int> &affectedPages,
+                                              int targetHistoryPosition)
+{
+    m_transformInProgress = false;
+    emit operationInProgressChanged(false);
+    success = success && pageSizes.size() == m_pageLabels.size();
+
+    if (success) {
+        m_historyPosition = targetHistoryPosition;
+        m_pageSizes = pageSizes;
+        for (const int pageIndex : affectedPages) {
+            if (pageIndex < 0 || pageIndex >= m_pageLabels.size())
+                continue;
+            m_pageLabels[pageIndex]->clear();
+            m_renderedWidths[pageIndex] = 0;
+        }
+        m_regionPageIndex = -1;
+        m_regionSelection = {};
+        updateModifiedState();
+        updateSelectionOverlays();
+        applyZoom();
+    } else {
+        qWarning() << "Failed to restore PDF edit history state:" << m_filePath;
+        syncEditControls();
+        QTimer::singleShot(0, this, &PdfViewerWidget::renderVisiblePages);
+    }
+    emit historyChanged();
 }
 
 void PdfViewerWidget::updateModifiedState()

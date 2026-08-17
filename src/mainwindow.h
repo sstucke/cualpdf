@@ -21,6 +21,7 @@ class QActionGroup;
 class QAction;
 class QAbstractItemDelegate;
 class QCloseEvent;
+class QMenu;
 QT_END_NAMESPACE
 
 class FolderContentModel;
@@ -58,6 +59,9 @@ private:
     void showPreferences();
     void showTips();
     void saveCurrentDocument();
+    void openExplorerTab();
+    void closeAllTabs();
+    void closeOtherTabs();
     void onTabCloseRequested(int index);
     void onTabContextMenuRequested(const QPoint &pos);
     void onTreeContextMenuRequested(const QPoint &pos);
@@ -72,9 +76,8 @@ private:
     void updateDetailsPanel(const QString &filePath);
     void clearDetailsPanel();
     void openPdfViewerTab(const QString &filePath);
-    void closePdfTabs();
-    bool requestClosePdfTab(int index);
-    void closePdfTabWithoutPrompt(int index);
+    bool requestCloseTab(int index);
+    void closeTabWithoutPrompt(int index);
     bool confirmCloseViewer(PdfViewerWidget *viewer);
     bool saveViewer(PdfViewerWidget *viewer);
     void updatePdfTabTitle(PdfViewerWidget *viewer);
@@ -84,6 +87,8 @@ private:
     void rebuildRecentFilesMenu();
     void setupViewModeMenu();
     void setupSortMenu();
+    void setupEditMenu();
+    void setupWindowMenu();
     void applyContentViewMode(AppSettings::ContentViewMode mode);
     void updateStatusBarForCurrentTab();
 
@@ -100,6 +105,15 @@ private:
     QActionGroup *viewModeActionGroup = nullptr;
     QActionGroup *sortActionGroup = nullptr;
     QAction *m_saveAction = nullptr;
+    QAction *m_closeTabAction = nullptr;
+    QAction *m_undoAction = nullptr;
+    QAction *m_redoAction = nullptr;
+    QMenu *m_editMenu = nullptr;
+    QMenu *m_sortMenuBar = nullptr;
+    QMenu *m_windowMenu = nullptr;
+    QAction *m_closeAllTabsAction = nullptr;
+    QAction *m_closeOtherTabsAction = nullptr;
+    QAction *m_openExplorerAction = nullptr;
     QAbstractItemDelegate *defaultContentDelegate = nullptr;
     QAbstractItemDelegate *detailsContentDelegate = nullptr;
     QAbstractItemDelegate *gridContentDelegate = nullptr;

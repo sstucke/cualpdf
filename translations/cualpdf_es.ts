@@ -32,6 +32,34 @@
 <context>
     <name>MainWindow</name>
     <message>
+        <source>&amp;Window</source>
+        <translation>&amp;Ventana</translation>
+    </message>
+    <message>
+        <source>Close All</source>
+        <translation>Cerrar todas</translation>
+    </message>
+    <message>
+        <source>Close Others</source>
+        <translation>Cerrar el resto</translation>
+    </message>
+    <message>
+        <source>Open Explorer</source>
+        <translation>Abrir explorador</translation>
+    </message>
+    <message>
+        <source>&amp;Edit</source>
+        <translation>&amp;Editar</translation>
+    </message>
+    <message>
+        <source>Undo</source>
+        <translation>Deshacer</translation>
+    </message>
+    <message>
+        <source>Redo</source>
+        <translation>Rehacer</translation>
+    </message>
+    <message>
         <source>Preferences…</source>
         <translation>Preferencias…</translation>
     </message>
@@ -687,6 +715,14 @@ Un editor de PDF rápido, liviano y de código abierto.</translation>
         <translation>Sugerencias</translation>
     </message>
     <message>
+        <source>Windows</source>
+        <translation>Ventanas</translation>
+    </message>
+    <message>
+        <source>Preserve the file explorer when closing all tabs</source>
+        <translation>Al cerrar todas las pestañas, preservar el explorador de archivos</translation>
+    </message>
+    <message>
         <source>Create a timestamped backup before overwriting a PDF</source>
         <translation>Crear una copia de seguridad con fecha antes de sobrescribir un PDF</translation>
     </message>
@@ -745,6 +781,10 @@ Un editor de PDF rápido, liviano y de código abierto.</translation>
     <message>
         <source>tips automatic close timeout countdown</source>
         <translation>sugerencias cierre automático tiempo cuenta regresiva</translation>
+    </message>
+    <message>
+        <source>windows tabs close all preserve keep file explorer</source>
+        <translation>ventanas pestañas cerrar todas preservar mantener explorador de archivos</translation>
     </message>
 </context>
 <context>

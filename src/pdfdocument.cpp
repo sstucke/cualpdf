@@ -34,13 +34,13 @@ QMutex &pdfiumMutex()
 }
 
 struct PdfFileWriter {
-    FPDF_FILEWRITE interface = {};
+    FPDF_FILEWRITE fileWrite = {};
     QIODevice *device = nullptr;
 };
 
-int writePdfBlock(FPDF_FILEWRITE *interface, const void *data, unsigned long size)
+int writePdfBlock(FPDF_FILEWRITE *fileWrite, const void *data, unsigned long size)
 {
-    auto *writer = reinterpret_cast<PdfFileWriter *>(interface);
+    auto *writer = reinterpret_cast<PdfFileWriter *>(fileWrite);
     return writer->device
                && writer->device->write(static_cast<const char *>(data),
                                         static_cast<qint64>(size)) == static_cast<qint64>(size);
@@ -367,6 +367,72 @@ bool PdfDocument::cropPages(const QVector<int> &pageIndexes,
     return transformed;
 }
 
+QVector<PdfPageState> PdfDocument::pageStates(const QVector<int> &pageIndexes) const
+{
+    if (!m_document || pageIndexes.isEmpty())
+        return {};
+
+    const QMutexLocker locker(&pdfiumMutex());
+    const auto document = static_cast<FPDF_DOCUMENT>(m_document);
+    const int pageCount = FPDF_GetPageCount(document);
+    QVector<PdfPageState> states;
+    states.reserve(pageIndexes.size());
+
+    for (const int pageIndex : pageIndexes) {
+        if (pageIndex < 0 || pageIndex >= pageCount)
+            return {};
+
+        const FPDF_PAGE page = FPDF_LoadPage(document, pageIndex);
+        if (!page)
+            return {};
+
+        const int rotation = FPDFPage_GetRotation(page);
+        float left = 0.0f;
+        float bottom = 0.0f;
+        float right = 0.0f;
+        float top = 0.0f;
+        bool hasBox = FPDFPage_GetCropBox(page, &left, &bottom, &right, &top);
+        if (!hasBox)
+            hasBox = FPDFPage_GetMediaBox(page, &left, &bottom, &right, &top);
+        FPDF_ClosePage(page);
+
+        if (rotation < 0 || !hasBox || right <= left || top <= bottom)
+            return {};
+        states.append({pageIndex, rotation, left, bottom, right, top});
+    }
+    return states;
+}
+
+bool PdfDocument::restorePageStates(const QVector<PdfPageState> &states)
+{
+    if (!m_document || states.isEmpty())
+        return false;
+
+    const QMutexLocker locker(&pdfiumMutex());
+    const auto document = static_cast<FPDF_DOCUMENT>(m_document);
+    const int pageCount = FPDF_GetPageCount(document);
+
+    for (const PdfPageState &state : states) {
+        if (state.pageIndex < 0 || state.pageIndex >= pageCount
+            || state.rotation < 0 || state.rotation > 3
+            || state.cropRight <= state.cropLeft || state.cropTop <= state.cropBottom) {
+            return false;
+        }
+
+        const FPDF_PAGE page = FPDF_LoadPage(document, state.pageIndex);
+        if (!page)
+            return false;
+        FPDFPage_SetRotation(page, state.rotation);
+        FPDFPage_SetCropBox(page,
+                            static_cast<float>(state.cropLeft),
+                            static_cast<float>(state.cropBottom),
+                            static_cast<float>(state.cropRight),
+                            static_cast<float>(state.cropTop));
+        FPDF_ClosePage(page);
+    }
+    return true;
+}
+
 bool PdfDocument::saveSafely(const QString &filePath, bool createTimestampedBackup,
                              int backupVersionLimit, QString *errorMessage)
 {
@@ -385,14 +451,14 @@ bool PdfDocument::saveSafely(const QString &filePath, bool createTimestampedBack
     }
 
     PdfFileWriter writer;
-    writer.interface.version = 1;
-    writer.interface.WriteBlock = &writePdfBlock;
+    writer.fileWrite.version = 1;
+    writer.fileWrite.WriteBlock = &writePdfBlock;
     writer.device = &output;
     bool serialized = false;
     {
         const QMutexLocker locker(&pdfiumMutex());
         serialized = FPDF_SaveAsCopy(static_cast<FPDF_DOCUMENT>(m_document),
-                                     &writer.interface, FPDF_NO_INCREMENTAL);
+                                     &writer.fileWrite, FPDF_NO_INCREMENTAL);
     }
     if (!serialized || !output.flush()) {
         output.cancelWriting();

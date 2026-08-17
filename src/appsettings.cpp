@@ -8,6 +8,7 @@ constexpr auto kCreateTimestampedBackupsKey = "createTimestampedBackups";
 constexpr auto kBackupVersionLimitKey = "backupVersionLimit";
 constexpr auto kShowTipsAtStartupKey = "showTipsAtStartup";
 constexpr auto kAutoCloseTipsKey = "autoCloseTips";
+constexpr auto kPreserveExplorerWhenClosingTabsKey = "preserveExplorerWhenClosingTabs";
 constexpr auto kDefaultContentViewMode = static_cast<int>(AppSettings::ContentViewMode::Thumbnails);
 constexpr int kDefaultBackupVersionLimit = 5;
 }
@@ -87,4 +88,14 @@ bool AppSettings::autoCloseTips() const
 void AppSettings::setAutoCloseTips(bool enabled)
 {
     m_settings.setValue(kAutoCloseTipsKey, enabled);
+}
+
+bool AppSettings::preserveExplorerWhenClosingTabs() const
+{
+    return m_settings.value(kPreserveExplorerWhenClosingTabsKey, true).toBool();
+}
+
+void AppSettings::setPreserveExplorerWhenClosingTabs(bool enabled)
+{
+    m_settings.setValue(kPreserveExplorerWhenClosingTabsKey, enabled);
 }

@@ -39,6 +39,9 @@ public:
     bool autoCloseTips() const;
     void setAutoCloseTips(bool enabled);
 
+    bool preserveExplorerWhenClosingTabs() const;
+    void setPreserveExplorerWhenClosingTabs(bool enabled);
+
 private:
     QSettings m_settings;
 };

@@ -178,10 +178,6 @@ MainWindow::MainWindow(QWidget *parent)
         connect(tabBar, &QTabBar::customContextMenuRequested, this,
                 &MainWindow::onTabContextMenuRequested);
 
-        const auto closeButtonSide = static_cast<QTabBar::ButtonPosition>(
-            style()->styleHint(QStyle::SH_TabBar_CloseButtonPosition, nullptr, tabBar));
-        if (QWidget *closeButton = tabBar->tabButton(0, closeButtonSide))
-            closeButton->hide();
     }
 
     connect(ui->folderTreeView->selectionModel(), &QItemSelectionModel::currentChanged, this,
@@ -222,6 +218,8 @@ MainWindow::MainWindow(QWidget *parent)
     ui->menuFile->insertAction(ui->menuRecent->menuAction(), m_saveAction);
     connect(m_saveAction, &QAction::triggered, this, &MainWindow::saveCurrentDocument);
 
+    setupEditMenu();
+
     auto *preferencesAction = new QAction(tr("Preferences…"), this);
     preferencesAction->setMenuRole(QAction::PreferencesRole);
     ui->menuFile->insertAction(ui->actionExit, preferencesAction);
@@ -239,6 +237,7 @@ MainWindow::MainWindow(QWidget *parent)
 
     setupViewModeMenu();
     setupSortMenu();
+    setupWindowMenu();
     applyContentViewMode(appSettings.contentViewMode());
 
     recentFiles = appSettings.recentFiles();
@@ -263,7 +262,7 @@ MainWindow::~MainWindow()
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
-    for (int index = ui->tabWidget->count() - 1; index > 0; --index) {
+    for (int index = ui->tabWidget->count() - 1; index >= 0; --index) {
         auto *viewer = qobject_cast<PdfViewerWidget *>(ui->tabWidget->widget(index));
         if (viewer && !confirmCloseViewer(viewer)) {
             event->ignore();
@@ -276,8 +275,10 @@ void MainWindow::closeEvent(QCloseEvent *event)
 void MainWindow::openFolder()
 {
     const QString path = QFileDialog::getExistingDirectory(this, tr("Open Folder"), currentFolderPath);
-    if (!path.isEmpty())
+    if (!path.isEmpty()) {
         setCurrentFolder(path);
+        openExplorerTab();
+    }
 }
 
 void MainWindow::goToParentFolder()
@@ -487,6 +488,28 @@ void MainWindow::setupViewModeMenu()
     ui->menuView->insertSeparator(ui->actionZoomIn);
 }
 
+void MainWindow::setupEditMenu()
+{
+    m_editMenu = new QMenu(tr("&Edit"), ui->menubar);
+    ui->menubar->insertMenu(ui->menuView->menuAction(), m_editMenu);
+
+    m_undoAction = m_editMenu->addAction(tr("Undo"));
+    m_undoAction->setShortcut(QKeySequence::Undo);
+    m_undoAction->setEnabled(false);
+    connect(m_undoAction, &QAction::triggered, this, [this]() {
+        if (auto *viewer = qobject_cast<PdfViewerWidget *>(ui->tabWidget->currentWidget()))
+            viewer->undo();
+    });
+
+    m_redoAction = m_editMenu->addAction(tr("Redo"));
+    m_redoAction->setShortcut(QKeySequence::Redo);
+    m_redoAction->setEnabled(false);
+    connect(m_redoAction, &QAction::triggered, this, [this]() {
+        if (auto *viewer = qobject_cast<PdfViewerWidget *>(ui->tabWidget->currentWidget()))
+            viewer->redo();
+    });
+}
+
 void MainWindow::setupSortMenu()
 {
     auto *sortButton = new QToolButton(this);
@@ -528,9 +551,31 @@ void MainWindow::setupSortMenu()
     sortButton->setMenu(sortMenu);
     ui->mainToolBar->addWidget(sortButton);
 
-    auto *menuBarSortMenu = new QMenu(tr("&Sort"), ui->menubar);
-    menuBarSortMenu->addActions(sortActionGroup->actions());
-    ui->menubar->insertMenu(ui->menuHelp->menuAction(), menuBarSortMenu);
+    m_sortMenuBar = new QMenu(tr("&Sort"), ui->menubar);
+    m_sortMenuBar->addActions(sortActionGroup->actions());
+    ui->menubar->insertMenu(ui->menuHelp->menuAction(), m_sortMenuBar);
+}
+
+void MainWindow::setupWindowMenu()
+{
+    m_windowMenu = new QMenu(tr("&Window"), ui->menubar);
+    ui->menubar->insertMenu(ui->menuHelp->menuAction(), m_windowMenu);
+
+    m_closeTabAction = m_windowMenu->addAction(tr("Close Tab"));
+    m_closeTabAction->setShortcut(QKeySequence::Close);
+    connect(m_closeTabAction, &QAction::triggered, this, [this]() {
+        requestCloseTab(ui->tabWidget->currentIndex());
+    });
+
+    m_closeAllTabsAction = m_windowMenu->addAction(tr("Close All"));
+    connect(m_closeAllTabsAction, &QAction::triggered, this, &MainWindow::closeAllTabs);
+
+    m_closeOtherTabsAction = m_windowMenu->addAction(tr("Close Others"));
+    connect(m_closeOtherTabsAction, &QAction::triggered, this, &MainWindow::closeOtherTabs);
+
+    m_windowMenu->addSeparator();
+    m_openExplorerAction = m_windowMenu->addAction(tr("Open Explorer"));
+    connect(m_openExplorerAction, &QAction::triggered, this, &MainWindow::openExplorerTab);
 }
 
 void MainWindow::applyContentViewMode(AppSettings::ContentViewMode mode)
@@ -590,8 +635,9 @@ void MainWindow::applyContentViewMode(AppSettings::ContentViewMode mode)
 
 void MainWindow::updateStatusBarForCurrentTab()
 {
-    auto *viewer = qobject_cast<PdfViewerWidget *>(ui->tabWidget->currentWidget());
-    const bool showingExplorer = viewer == nullptr;
+    QWidget *currentWidget = ui->tabWidget->currentWidget();
+    auto *viewer = qobject_cast<PdfViewerWidget *>(currentWidget);
+    const bool showingExplorer = currentWidget == ui->explorerTab;
 
     thumbnailZoomWidget->setVisible(showingExplorer);
     pageZoomWidget->setVisible(viewer != nullptr);
@@ -599,8 +645,25 @@ void MainWindow::updateStatusBarForCurrentTab()
     ui->actionZoomIn->setEnabled(showingExplorer);
     ui->actionZoomOut->setEnabled(showingExplorer);
     ui->actionResetZoom->setEnabled(showingExplorer);
+    ui->mainToolBar->setVisible(showingExplorer);
+    ui->menuView->menuAction()->setVisible(showingExplorer);
+    m_sortMenuBar->menuAction()->setVisible(showingExplorer);
+    m_editMenu->menuAction()->setVisible(viewer != nullptr);
+    m_saveAction->setVisible(viewer != nullptr);
+    m_closeTabAction->setEnabled(currentWidget != nullptr
+                                 && (!viewer || !viewer->isOperationInProgress()));
+    const bool explorerIsOpen = ui->tabWidget->indexOf(ui->explorerTab) >= 0;
+    const int pdfTabCount = ui->tabWidget->count() - (explorerIsOpen ? 1 : 0);
+    const bool preserveExplorer = appSettings.preserveExplorerWhenClosingTabs();
+    m_closeAllTabsAction->setEnabled(preserveExplorer ? pdfTabCount > 0
+                                                      : ui->tabWidget->count() > 0);
+    m_closeOtherTabsAction->setEnabled(
+        currentWidget != nullptr
+        && (ui->tabWidget->count() > 1 || (preserveExplorer && !explorerIsOpen)));
     m_saveAction->setEnabled(viewer && viewer->isModified()
                              && !viewer->isOperationInProgress());
+    m_undoAction->setEnabled(viewer && viewer->canUndo());
+    m_redoAction->setEnabled(viewer && viewer->canRedo());
 
     if (viewer) {
         const QSignalBlocker blocker(pageZoomSlider);
@@ -618,9 +681,12 @@ void MainWindow::showAboutDialog()
 void MainWindow::showPreferences()
 {
     PreferencesDialog dialog(appSettings, this);
-    if (dialog.exec() == QDialog::Accepted && m_tipsDialog) {
-        m_tipsDialog->setShowAtStartup(appSettings.showTipsAtStartup());
-        m_tipsDialog->setAutoCloseEnabled(appSettings.autoCloseTips());
+    if (dialog.exec() == QDialog::Accepted) {
+        if (m_tipsDialog) {
+            m_tipsDialog->setShowAtStartup(appSettings.showTipsAtStartup());
+            m_tipsDialog->setAutoCloseEnabled(appSettings.autoCloseTips());
+        }
+        updateStatusBarForCurrentTab();
     }
 }
 
@@ -648,33 +714,77 @@ void MainWindow::saveCurrentDocument()
         saveViewer(viewer);
 }
 
-void MainWindow::onTabCloseRequested(int index)
+void MainWindow::openExplorerTab()
 {
-    requestClosePdfTab(index);
+    const int existingIndex = ui->tabWidget->indexOf(ui->explorerTab);
+    if (existingIndex < 0)
+        ui->tabWidget->insertTab(0, ui->explorerTab, tr("Explorer"));
+    ui->tabWidget->setCurrentWidget(ui->explorerTab);
 }
 
-bool MainWindow::requestClosePdfTab(int index)
+void MainWindow::closeAllTabs()
 {
-    if (index <= 0 || index >= ui->tabWidget->count()) // Explorer is permanent.
+    const bool preserveExplorer = appSettings.preserveExplorerWhenClosingTabs();
+    for (int index = ui->tabWidget->count() - 1; index >= 0; --index) {
+        if (preserveExplorer && ui->tabWidget->widget(index) == ui->explorerTab)
+            continue;
+        if (!requestCloseTab(index))
+            return;
+    }
+    if (preserveExplorer)
+        openExplorerTab();
+}
+
+void MainWindow::closeOtherTabs()
+{
+    QWidget *keptWidget = ui->tabWidget->currentWidget();
+    const bool preserveExplorer = appSettings.preserveExplorerWhenClosingTabs();
+
+    for (int index = ui->tabWidget->count() - 1; index >= 0; --index) {
+        QWidget *widget = ui->tabWidget->widget(index);
+        const bool keepExplorer = preserveExplorer && widget == ui->explorerTab;
+        if (widget != keptWidget && !keepExplorer && !requestCloseTab(index))
+            return;
+    }
+
+    if (preserveExplorer && ui->tabWidget->indexOf(ui->explorerTab) < 0)
+        ui->tabWidget->insertTab(0, ui->explorerTab, tr("Explorer"));
+    if (ui->tabWidget->indexOf(keptWidget) >= 0)
+        ui->tabWidget->setCurrentWidget(keptWidget);
+    else if (preserveExplorer)
+        ui->tabWidget->setCurrentWidget(ui->explorerTab);
+}
+
+void MainWindow::onTabCloseRequested(int index)
+{
+    requestCloseTab(index);
+}
+
+bool MainWindow::requestCloseTab(int index)
+{
+    if (index < 0 || index >= ui->tabWidget->count())
         return false;
 
     auto *viewer = qobject_cast<PdfViewerWidget *>(ui->tabWidget->widget(index));
     if (viewer && !confirmCloseViewer(viewer))
         return false;
 
-    closePdfTabWithoutPrompt(index);
+    closeTabWithoutPrompt(index);
     return true;
 }
 
-void MainWindow::closePdfTabWithoutPrompt(int index)
+void MainWindow::closeTabWithoutPrompt(int index)
 {
-    if (index <= 0 || index >= ui->tabWidget->count())
+    if (index < 0 || index >= ui->tabWidget->count())
         return;
 
     QWidget *widget = ui->tabWidget->widget(index);
     ui->tabWidget->removeTab(index);
-    updatePdfTabTitle(qobject_cast<PdfViewerWidget *>(widget));
-    widget->deleteLater();
+    if (auto *viewer = qobject_cast<PdfViewerWidget *>(widget)) {
+        updatePdfTabTitle(viewer);
+        viewer->deleteLater();
+    }
+    updateStatusBarForCurrentTab();
 }
 
 void MainWindow::onTabContextMenuRequested(const QPoint &pos)
@@ -682,43 +792,23 @@ void MainWindow::onTabContextMenuRequested(const QPoint &pos)
     QTabBar *tabBar = ui->tabWidget->tabBar();
     const int tabIndex = tabBar->tabAt(pos);
 
-    // The Explorer tab is permanent and has no PDF-tab actions.
-    if (tabIndex <= 0)
+    if (tabIndex < 0)
         return;
 
     QMenu menu(this);
     QAction *closeAction = menu.addAction(tr("Close Tab"));
-    QAction *closeOthersAction = menu.addAction(tr("Close Other Tabs"));
-    QAction *closeAllAction = menu.addAction(tr("Close All PDF Tabs"));
+    QAction *closeOthersAction = menu.addAction(tr("Close Others"));
+    QAction *closeAllAction = menu.addAction(tr("Close All"));
 
     QAction *chosen = menu.exec(tabBar->mapToGlobal(pos));
     if (chosen == closeAction) {
         onTabCloseRequested(tabIndex);
     } else if (chosen == closeOthersAction) {
-        QWidget *keptWidget = ui->tabWidget->widget(tabIndex);
-        for (int index = ui->tabWidget->count() - 1; index > 0; --index) {
-            if (ui->tabWidget->widget(index) != keptWidget
-                && !requestClosePdfTab(index)) {
-                break;
-            }
-        }
-        if (ui->tabWidget->indexOf(keptWidget) >= 0)
-            ui->tabWidget->setCurrentWidget(keptWidget);
+        ui->tabWidget->setCurrentIndex(tabIndex);
+        closeOtherTabs();
     } else if (chosen == closeAllAction) {
-        closePdfTabs();
+        closeAllTabs();
     }
-}
-
-void MainWindow::closePdfTabs()
-{
-    // Close from right to left so removing a tab never changes the index of
-    // a tab that is still waiting to be closed. Index zero is Explorer.
-    for (int index = ui->tabWidget->count() - 1; index > 0; --index) {
-        if (!requestClosePdfTab(index))
-            return;
-    }
-
-    ui->tabWidget->setCurrentIndex(0);
 }
 
 bool MainWindow::confirmCloseViewer(PdfViewerWidget *viewer)
@@ -938,12 +1028,20 @@ void MainWindow::openPdfViewerTab(const QString &filePath)
                 pageZoomSlider->setValue(percent);
             });
     connect(viewer, &PdfViewerWidget::modifiedChanged, this,
-            [this, viewer]() { updatePdfTabTitle(viewer); });
+            [this, viewer]() {
+                updatePdfTabTitle(viewer);
+                if (ui->tabWidget->currentWidget() == viewer)
+                    updateStatusBarForCurrentTab();
+            });
     connect(viewer, &PdfViewerWidget::operationInProgressChanged, this,
             [this, viewer]() {
                 if (ui->tabWidget->currentWidget() == viewer)
                     updateStatusBarForCurrentTab();
             });
+    connect(viewer, &PdfViewerWidget::historyChanged, this, [this, viewer]() {
+        if (ui->tabWidget->currentWidget() == viewer)
+            updateStatusBarForCurrentTab();
+    });
 
     const int index = ui->tabWidget->addTab(viewer, QFileInfo(filePath).fileName());
     ui->tabWidget->setCurrentIndex(index);
