@@ -4,11 +4,13 @@
 
 ---
 
-> ⚠️ **Early Development Notice**
+> ⚠️ **Public Beta**
 > 
-> **cualpdf** is currently in early beta. Expect bugs, missing features, and breaking changes.
+> **Beta software: expect bugs and keep backups.**
+> The PDFs are serious; this build is still learning manners.
+>
+> **cualpdf** is under active development. Missing features and breaking changes are still possible.
 > Binaries for Windows and macOS are currently **unsigned**. 
-> Always keep backups of critical files before processing them.
 
 ---
 

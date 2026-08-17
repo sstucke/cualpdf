@@ -126,4 +126,10 @@ jobs:
       - name: Subir al Release
         uses: softprops/action-gh-release@v2
         with:
+          name: cualpdf ${{ github.ref_name }} — Public Beta
+          prerelease: true
+          generate_release_notes: true
+          body: |
+            **Beta software: expect bugs and keep backups.**
+            The PDFs are serious; this build is still learning manners.
           files: release-assets/*
