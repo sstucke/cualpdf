@@ -104,7 +104,7 @@ jobs:
 
       - name: Guardar artifact
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: cualpdf-${{ matrix.name }}
           path: dist/*
@@ -118,7 +118,7 @@ jobs:
       contents: write
     steps:
       - name: Descargar artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: release-assets
           merge-multiple: true
