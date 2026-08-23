@@ -157,7 +157,7 @@ private:
     void syncEditControls();
     void rotateSelectedPages(bool clockwise);
     void cropSelectedRegion();
-    void lightenSelectedPage();
+    void lightenSelectedPage(int overridePageIndex = -1);
     void finishDocumentTransform(bool success, const QVector<QSizeF> &pageSizes,
                                  const QVector<int> &affectedPages, bool clearRegion,
                                  const QString &historyDescription,

@@ -1636,12 +1636,20 @@ void PdfViewerWidget::showPageContextMenu(int pageIndex, const QPoint &globalPos
 {
     if (pageIndex < 0 || pageIndex >= m_pageLabels.size())
         return;
-    if (!m_selectedPages.contains(pageIndex)) {
+
+    // In Region mode, right-clicking must not clobber the in-progress region
+    // selection with a whole-page selection — only Page mode auto-selects
+    // the clicked page here.
+    if (m_selectionMode == SelectionMode::Page && !m_selectedPages.contains(pageIndex)) {
         m_selectedPages = {pageIndex};
         m_pageSelectionAnchor = pageIndex;
         setCurrentPageFromPointer(pageIndex);
         updateSelectionOverlays();
     }
+
+    const bool hasRegionSelection = m_selectionMode == SelectionMode::Region
+                                    && m_regionPageIndex >= 0
+                                    && !m_regionSelection.isEmpty();
 
     QMenu menu(this);
     QAction *cutAction = menu.addAction(tr("Cut"));
@@ -1657,7 +1665,9 @@ void PdfViewerWidget::showPageContextMenu(int pageIndex, const QPoint &globalPos
     copyAction->setEnabled(canCopy);
     cutAction->setEnabled(canCopy && m_selectedPages.size() < m_pageLabels.size());
     extractAction->setEnabled(canCopy);
-    lightenAction->setEnabled(canCopy);
+    const bool canLighten = m_valid && !m_transformInProgress && !m_saveInProgress
+                           && (!m_selectedPages.isEmpty() || hasRegionSelection);
+    lightenAction->setEnabled(canLighten);
 
     QAction *selectedAction = menu.exec(globalPosition);
     if (selectedAction == cutAction)
@@ -1665,7 +1675,7 @@ void PdfViewerWidget::showPageContextMenu(int pageIndex, const QPoint &globalPos
     else if (selectedAction == copyAction)
         copySelectedPages(/*cut=*/false);
     else if (selectedAction == lightenAction)
-        lightenSelectedPage();
+        lightenSelectedPage(hasRegionSelection ? m_regionPageIndex : -1);
     else if (selectedAction == extractAction)
         extractSelectedPages();
 }
@@ -2279,14 +2289,20 @@ void PdfViewerWidget::cropSelectedRegion()
     thread->start();
 }
 
-void PdfViewerWidget::lightenSelectedPage()
+void PdfViewerWidget::lightenSelectedPage(int overridePageIndex)
 {
-    if (!m_valid || m_transformInProgress || m_saveInProgress
-        || m_selectedPages.isEmpty()) {
+    if (!m_valid || m_transformInProgress || m_saveInProgress)
         return;
-    }
 
-    const int pageIndex = *std::min_element(m_selectedPages.cbegin(), m_selectedPages.cend());
+    // overridePageIndex carries the page under an active region selection
+    // (Region mode); otherwise fall back to the whole-page selection
+    // (Page mode).
+    int pageIndex = overridePageIndex;
+    if (pageIndex < 0) {
+        if (m_selectedPages.isEmpty())
+            return;
+        pageIndex = *std::min_element(m_selectedPages.cbegin(), m_selectedPages.cend());
+    }
     if (pageIndex < 0 || pageIndex >= m_pageLabels.size())
         return;
 
@@ -2679,7 +2695,8 @@ bool PdfViewerWidget::eventFilter(QObject *watched, QEvent *event)
         auto *label = static_cast<PdfPageLabel *>(watched);
 
         if (event->type() == QEvent::ContextMenu
-            && m_selectionMode == SelectionMode::Page) {
+            && (m_selectionMode == SelectionMode::Page
+                || m_selectionMode == SelectionMode::Region)) {
             auto *contextEvent = static_cast<QContextMenuEvent *>(event);
             showPageContextMenu(pageIndex, contextEvent->globalPos());
             return true;
