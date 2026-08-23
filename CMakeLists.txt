@@ -116,10 +116,6 @@ set(WITH_OPENJPEG OFF CACHE BOOL "" FORCE)
 set(WITH_IPP OFF CACHE BOOL "" FORCE)
 set(WITH_ITT OFF CACHE BOOL "" FORCE)
 set(WITH_TBB OFF CACHE BOOL "" FORCE)
-# MSVC has no native pthreads; without this OpenCV tries to link against a
-# pthreads parallel_for backend that doesn't exist there (LNK1181: cannot
-# open input file 'pthread.lib'). It falls back to its own std::thread-based
-# backend instead, which every platform here already has.
 set(WITH_PTHREADS_PF OFF CACHE BOOL "" FORCE)
 set(WITH_OPENCL OFF CACHE BOOL "" FORCE)
 set(WITH_PROTOBUF OFF CACHE BOOL "" FORCE)
@@ -157,6 +153,31 @@ if(NOT opencv_POPULATED)
 endif()
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
+
+# OpenCV's own top-level CMakeLists.txt unconditionally adds "dl", "m",
+# "pthread", and "rt" to its linker libs on any platform that isn't
+# Android/BSD/Emscripten/QNX/MinGW/Apple — there's no elseif() carved out
+# for plain MSVC, so on Windows it still asks to link pthread.lib (which
+# doesn't exist there) even though nothing in the actual compiled code
+# calls a pthread_* function on that platform (verified: no
+# `#pragma comment(lib, "pthread")` anywhere in the OpenCV sources either,
+# so this is purely a stray CMake dependency, not a real symbol need).
+# Strip it from the built targets' link requirements after the fact rather
+# than patching OpenCV's own build script.
+if(WIN32)
+    foreach(_cualpdf_opencv_target IN ITEMS opencv_core opencv_imgproc
+                                            opencv_flann opencv_geometry)
+        if(TARGET ${_cualpdf_opencv_target})
+            get_target_property(_cualpdf_opencv_link_libs
+                ${_cualpdf_opencv_target} INTERFACE_LINK_LIBRARIES)
+            if(_cualpdf_opencv_link_libs)
+                list(REMOVE_ITEM _cualpdf_opencv_link_libs dl m pthread rt)
+                set_target_properties(${_cualpdf_opencv_target} PROPERTIES
+                    INTERFACE_LINK_LIBRARIES "${_cualpdf_opencv_link_libs}")
+            endif()
+        endif()
+    endforeach()
+endif()
 
 qt_add_executable(cualpdf
     src/main.cpp
