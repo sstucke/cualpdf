@@ -50,7 +50,10 @@ jobs:
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 
       - name: Compilar
-        run: cmake --build build --config Release --parallel
+        # Capped rather than unlimited parallelism: building OpenCV from
+        # source is memory-heavy per translation unit, and unlimited
+        # --parallel was OOM-killing the Linux/Windows runners mid-build.
+        run: cmake --build build --config Release --parallel 2
 
       - name: Instalar en install_output
         if: startsWith(github.ref, 'refs/tags/v')

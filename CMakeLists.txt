@@ -122,6 +122,16 @@ set(WITH_QUIRC OFF CACHE BOOL "" FORCE)
 set(WITH_V4L OFF CACHE BOOL "" FORCE)
 set(OPENCV_GENERATE_PKGCONFIG OFF CACHE BOOL "" FORCE)
 
+# By default OpenCV compiles most core/imgproc source files once per CPU
+# dispatch target (SSE4.1, AVX, AVX2, AVX512...), multiplying the number of
+# translation units several times over. "Aclarar" and friends are an
+# occasional user action, not a hot loop, so that runtime dispatch isn't
+# worth its build cost — a single SSE4.2 baseline (safe on any x86_64) with
+# no extra dispatch variants cut CI's peak memory enough to stop it from
+# getting killed mid-build on GitHub's Linux/Windows runners.
+set(CPU_BASELINE "SSE4_2" CACHE STRING "" FORCE)
+set(CPU_DISPATCH "" CACHE STRING "" FORCE)
+
 # EXCLUDE_FROM_ALL keeps OpenCV's own install() rules (headers, .a files,
 # CMake package config) out of `cmake --install` for this project — without
 # it they'd get pulled in as a side effect of add_subdirectory() and pollute
