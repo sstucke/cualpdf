@@ -116,6 +116,11 @@ set(WITH_OPENJPEG OFF CACHE BOOL "" FORCE)
 set(WITH_IPP OFF CACHE BOOL "" FORCE)
 set(WITH_ITT OFF CACHE BOOL "" FORCE)
 set(WITH_TBB OFF CACHE BOOL "" FORCE)
+# MSVC has no native pthreads; without this OpenCV tries to link against a
+# pthreads parallel_for backend that doesn't exist there (LNK1181: cannot
+# open input file 'pthread.lib'). It falls back to its own std::thread-based
+# backend instead, which every platform here already has.
+set(WITH_PTHREADS_PF OFF CACHE BOOL "" FORCE)
 set(WITH_OPENCL OFF CACHE BOOL "" FORCE)
 set(WITH_PROTOBUF OFF CACHE BOOL "" FORCE)
 set(WITH_QUIRC OFF CACHE BOOL "" FORCE)
