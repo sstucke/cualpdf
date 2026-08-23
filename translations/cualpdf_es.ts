@@ -325,25 +325,14 @@
         <translation>Acerca de cualpdf</translation>
     </message>
     <message>
-        <location filename="../src/mainwindow.cpp" line="347"/>
-        <source>%1
-Version %2
-
-A fast, lightweight, open-source PDF editor.
-
-Copyright © cualpdf contributors.
-Licensed under the Apache License 2.0.
-
-https://github.com/sstucke/cualpdf</source>
-        <translation>%1
-Versión %2
-
-Un editor de PDF rápido, liviano y de código abierto.
-
-Copyright © colaboradores de cualpdf.
-Licenciado bajo la Licencia Apache 2.0.
-
-https://github.com/sstucke/cualpdf</translation>
+        <location filename="../src/mainwindow.cpp" line="713"/>
+        <source>&lt;p&gt;&lt;b&gt;%1&lt;/b&gt;&lt;br&gt;Version %2&lt;/p&gt;&lt;p&gt;A fast, lightweight, open-source PDF editor.&lt;/p&gt;&lt;p&gt;Copyright &amp;copy; cualpdf contributors.&lt;br&gt;Licensed under the Apache License 2.0.&lt;/p&gt;&lt;p&gt;&lt;a href="https://github.com/sstucke/cualpdf"&gt;github.com/sstucke/cualpdf&lt;/a&gt; &amp;mdash; source, README, license&lt;/p&gt;&lt;p&gt;&lt;b&gt;%3&lt;/b&gt;&lt;/p&gt;&lt;ul&gt;&lt;li&gt;Qt 6 (Widgets) &amp;mdash; LGPLv3 &amp;mdash; &lt;a href="https://www.qt.io"&gt;qt.io&lt;/a&gt;&lt;/li&gt;&lt;li&gt;PDFium &amp;mdash; BSD-3-Clause &amp;mdash; &lt;a href="https://pdfium.googlesource.com/pdfium"&gt;pdfium.googlesource.com/pdfium&lt;/a&gt; (prebuilt via &lt;a href="https://github.com/bblanchon/pdfium-binaries"&gt;bblanchon/pdfium-binaries&lt;/a&gt;)&lt;/li&gt;&lt;li&gt;OpenCV &amp;mdash; Apache License 2.0 &amp;mdash; &lt;a href="https://opencv.org"&gt;opencv.org&lt;/a&gt;&lt;/li&gt;&lt;/ul&gt;</source>
+        <translation>&lt;p&gt;&lt;b&gt;%1&lt;/b&gt;&lt;br&gt;Versión %2&lt;/p&gt;&lt;p&gt;Un editor de PDF rápido, liviano y de código abierto.&lt;/p&gt;&lt;p&gt;Copyright &amp;copy; colaboradores de cualpdf.&lt;br&gt;Licenciado bajo la Licencia Apache 2.0.&lt;/p&gt;&lt;p&gt;&lt;a href="https://github.com/sstucke/cualpdf"&gt;github.com/sstucke/cualpdf&lt;/a&gt; &amp;mdash; código fuente, README, licencia&lt;/p&gt;&lt;p&gt;&lt;b&gt;%3&lt;/b&gt;&lt;/p&gt;&lt;ul&gt;&lt;li&gt;Qt 6 (Widgets) &amp;mdash; LGPLv3 &amp;mdash; &lt;a href="https://www.qt.io"&gt;qt.io&lt;/a&gt;&lt;/li&gt;&lt;li&gt;PDFium &amp;mdash; BSD-3-Clause &amp;mdash; &lt;a href="https://pdfium.googlesource.com/pdfium"&gt;pdfium.googlesource.com/pdfium&lt;/a&gt; (binario precompilado vía &lt;a href="https://github.com/bblanchon/pdfium-binaries"&gt;bblanchon/pdfium-binaries&lt;/a&gt;)&lt;/li&gt;&lt;li&gt;OpenCV &amp;mdash; Apache License 2.0 &amp;mdash; &lt;a href="https://opencv.org"&gt;opencv.org&lt;/a&gt;&lt;/li&gt;&lt;/ul&gt;</translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.cpp" line="734"/>
+        <source>Third-party open-source software used</source>
+        <translation>Software de código abierto de terceros</translation>
     </message>
     <message numerus="yes">
         <location filename="../src/mainwindow.cpp" line="383"/>
@@ -912,6 +901,26 @@ https://github.com/sstucke/cualpdf</translation>
     <message>
         <source>Crop pages</source>
         <translation>Recortar páginas</translation>
+    </message>
+    <message>
+        <source>Lighten Page…</source>
+        <translation>Aclarar…</translation>
+    </message>
+    <message>
+        <source>Lighten Page</source>
+        <translation>Aclarar</translation>
+    </message>
+    <message>
+        <source>Amount:</source>
+        <translation>Intensidad:</translation>
+    </message>
+    <message>
+        <source>The page could not be enhanced.</source>
+        <translation>No se pudo mejorar la página.</translation>
+    </message>
+    <message>
+        <source>Lighten page</source>
+        <translation>Aclarar página</translation>
     </message>
     <message>
         <location filename="../src/pdfviewerwidget.cpp" line="115"/>

@@ -120,7 +120,6 @@ private:
     void showPageContextMenu(int pageIndex, const QPoint &globalPosition);
     void showInsertionContextMenu(int insertionIndex, const QPoint &globalPosition);
     void startSelectedPageDrag(QLabel *sourceLabel);
-    void setPlaceholderDragActive(bool active);
     void moveSelectedPagesTo(int insertionIndex);
     void copySelectedPages(bool cut);
     void finishPageCopy(const QByteArray &pageArchive, int pageCount);
@@ -158,6 +157,7 @@ private:
     void syncEditControls();
     void rotateSelectedPages(bool clockwise);
     void cropSelectedRegion();
+    void lightenSelectedPage();
     void finishDocumentTransform(bool success, const QVector<QSizeF> &pageSizes,
                                  const QVector<int> &affectedPages, bool clearRegion,
                                  const QString &historyDescription,

@@ -706,14 +706,33 @@ void MainWindow::updateStatusBarForCurrentTab()
 
 void MainWindow::showAboutDialog()
 {
-    QMessageBox::about(this, tr("About cualpdf"),
-                       tr("%1\nVersion %2\n\n"
-                          "A fast, lightweight, open-source PDF editor.\n\n"
-                          "Copyright © cualpdf contributors.\n"
-                          "Licensed under the Apache License 2.0.\n\n"
-                          "https://github.com/sstucke/cualpdf")
-                           .arg(QCoreApplication::applicationName(),
-                                QCoreApplication::applicationVersion()));
+    QMessageBox dialog(this);
+    dialog.setWindowTitle(tr("About cualpdf"));
+    dialog.setIcon(QMessageBox::NoIcon);
+    dialog.setTextFormat(Qt::RichText);
+    dialog.setText(
+        tr("<p><b>%1</b><br>Version %2</p>"
+           "<p>A fast, lightweight, open-source PDF editor.</p>"
+           "<p>Copyright &copy; cualpdf contributors.<br>"
+           "Licensed under the Apache License 2.0.</p>"
+           "<p><a href=\"https://github.com/sstucke/cualpdf\">"
+           "github.com/sstucke/cualpdf</a> &mdash; source, README, license</p>"
+           "<p><b>%3</b></p>"
+           "<ul>"
+           "<li>Qt 6 (Widgets) &mdash; LGPLv3 &mdash; "
+           "<a href=\"https://www.qt.io\">qt.io</a></li>"
+           "<li>PDFium &mdash; BSD-3-Clause &mdash; "
+           "<a href=\"https://pdfium.googlesource.com/pdfium\">"
+           "pdfium.googlesource.com/pdfium</a> (prebuilt via "
+           "<a href=\"https://github.com/bblanchon/pdfium-binaries\">"
+           "bblanchon/pdfium-binaries</a>)</li>"
+           "<li>OpenCV &mdash; Apache License 2.0 &mdash; "
+           "<a href=\"https://opencv.org\">opencv.org</a></li>"
+           "</ul>")
+            .arg(QCoreApplication::applicationName(),
+                 QCoreApplication::applicationVersion(),
+                 tr("Third-party open-source software used")));
+    dialog.exec();
 }
 
 void MainWindow::showPreferences()

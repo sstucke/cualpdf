@@ -20,6 +20,7 @@
 #include <QSet>
 
 #include <algorithm>
+#include <cstring>
 
 namespace {
 bool g_libraryInitialized = false;
@@ -509,6 +510,55 @@ QByteArray PdfDocument::createBlankPageArchive(const QSizeF &pageSize)
         FPDF_ClosePage(page);
         if (generated)
             archive = serializeDocument(archiveDocument);
+    }
+    FPDF_CloseDocument(archiveDocument);
+    return archive;
+}
+
+QByteArray PdfDocument::createImagePageArchive(const QImage &image, const QSizeF &pageSize)
+{
+    if (image.isNull() || pageSize.width() <= 0.0 || pageSize.height() <= 0.0)
+        return {};
+
+    // FPDFBitmap_Create(..., alpha=0) yields BGRx byte order, matching
+    // QImage::Format_RGB32's in-memory layout — see renderPage() above.
+    const QImage source = image.convertToFormat(QImage::Format_RGB32);
+
+    const QMutexLocker locker(&pdfiumMutex());
+    const FPDF_DOCUMENT archiveDocument = FPDF_CreateNewDocument();
+    if (!archiveDocument)
+        return {};
+
+    QByteArray archive;
+    const FPDF_PAGE page = FPDFPage_New(archiveDocument, 0,
+                                        pageSize.width(), pageSize.height());
+    if (page) {
+        const FPDF_BITMAP bitmap =
+            FPDFBitmap_Create(source.width(), source.height(), /*alpha=*/0);
+        if (bitmap) {
+            auto *buffer = static_cast<uchar *>(FPDFBitmap_GetBuffer(bitmap));
+            const int stride = FPDFBitmap_GetStride(bitmap);
+            for (int row = 0; row < source.height(); ++row) {
+                std::memcpy(buffer + static_cast<size_t>(row) * stride,
+                           source.constScanLine(row),
+                           static_cast<size_t>(source.width()) * 4);
+            }
+
+            const FPDF_PAGEOBJECT imageObject = FPDFPageObj_NewImageObj(archiveDocument);
+            if (imageObject && FPDFImageObj_SetBitmap(nullptr, 0, imageObject, bitmap)) {
+                // Image objects start as a 1x1 unit square; scale to fill
+                // the page exactly.
+                FPDFPageObj_Transform(imageObject, pageSize.width(), 0, 0,
+                                      pageSize.height(), 0, 0);
+                FPDFPage_InsertObject(page, imageObject);
+                if (FPDFPage_GenerateContent(page))
+                    archive = serializeDocument(archiveDocument);
+            } else if (imageObject) {
+                FPDFPageObj_Destroy(imageObject);
+            }
+            FPDFBitmap_Destroy(bitmap);
+        }
+        FPDF_ClosePage(page);
     }
     FPDF_CloseDocument(archiveDocument);
     return archive;

@@ -1,5 +1,6 @@
 #include "pdfviewerwidget.h"
 
+#include "imageenhancement.h"
 #include "pdfdocument.h"
 
 #include <QActionGroup>
@@ -39,6 +40,7 @@
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QSaveFile>
+#include <QSlider>
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QStyle>
@@ -76,52 +78,79 @@ public:
         setCursor(Qt::PointingHandCursor);
         setToolTip(QCoreApplication::translate(
             "PdfViewerWidget", "Insert pages here"));
+        // The hit area now overlaps neighboring page thumbnails (see
+        // rebuildPageLayout's kHoverHitPadding). Without this, Qt erases the
+        // widget's rect to the background color before every paintEvent,
+        // which would blank out that overlap even when we intentionally
+        // paint nothing (at rest).
+        setAttribute(Qt::WA_NoSystemBackground, true);
     }
 
-    void setDragActive(bool active)
+    void setHovered(bool hovered)
     {
-        if (m_dragActive == active)
+        if (m_hovered == hovered)
             return;
-        m_dragActive = active;
-        if (!active)
-            m_dropTarget = false;
+        m_hovered = hovered;
         update();
     }
 
 protected:
+    void enterEvent(QEnterEvent *event) override
+    {
+        QWidget::enterEvent(event);
+        setHovered(true);
+    }
+
+    void leaveEvent(QEvent *event) override
+    {
+        QWidget::leaveEvent(event);
+        // While our own context menu is open, the popup's mouse grab
+        // generates a spurious Leave (the cursor hasn't actually moved) —
+        // ignore it, contextMenuEvent() manages hover for that duration.
+        if (!m_menuOpen)
+            setHovered(false);
+    }
+
     void paintEvent(QPaintEvent *) override
     {
+        // Only show the insertion indicator when the cursor (or an active
+        // page drag) is actually over this gap; at rest it stays blank
+        // (still clickable for the context menu, and still a valid drop
+        // target). Sibling gaps stay blank too while a drag is in progress
+        // elsewhere — only the one under the cursor lights up, matching
+        // Acrobat's single moving insertion line and Foxit's per-gap hover
+        // icon.
+        if (!m_dropTarget && !m_hovered)
+            return;
+
         QPainter painter(this);
         painter.setRenderHint(QPainter::Antialiasing);
+        // Always accent blue: page content is unpredictable (white, colored,
+        // scanned), so a theme-derived gray line can vanish against it. Only
+        // the intensity changes between a resting hover and an active drop
+        // target.
         const QColor accent(QStringLiteral("#2684ff"));
         const bool horizontal = width() >= height();
         const QPointF first = horizontal ? QPointF(4, height() / 2.0)
                                          : QPointF(width() / 2.0, 4);
         const QPointF second = horizontal ? QPointF(width() - 4, height() / 2.0)
                                           : QPointF(width() / 2.0, height() - 4);
-        QColor lineColor = palette().color(QPalette::Mid);
-        qreal lineWidth = 1.0;
-        if (m_dragActive) {
-            lineColor = accent;
-            lineWidth = m_dropTarget ? 4.0 : 2.0;
-            painter.fillRect(rect(), QColor(38, 132, 255, m_dropTarget ? 48 : 18));
-        }
-        painter.setPen(QPen(lineColor, lineWidth, Qt::SolidLine, Qt::RoundCap));
+        // A single solid stroke, matching how comparable apps (Acrobat,
+        // Figma layer reordering, etc.) show an insertion point.
+        const qreal lineWidth = m_dropTarget ? 4.0 : 2.0;
+        painter.setPen(QPen(accent, lineWidth, Qt::SolidLine, Qt::RoundCap));
         painter.drawLine(first, second);
-
-        const QPointF center = rect().center();
-        painter.setBrush(m_dragActive ? accent : palette().color(QPalette::Button));
-        painter.setPen(QPen(lineColor, 1.2));
-        painter.drawEllipse(center, 6, 6);
-        painter.setPen(QPen(m_dragActive ? Qt::white : lineColor, 1.3));
-        painter.drawLine(center + QPointF(-3, 0), center + QPointF(3, 0));
-        painter.drawLine(center + QPointF(0, -3), center + QPointF(0, 3));
     }
 
     void contextMenuEvent(QContextMenuEvent *event) override
     {
-        if (m_contextMenuHandler)
+        if (m_contextMenuHandler) {
+            m_menuOpen = true;
+            setHovered(true);
             m_contextMenuHandler(m_insertionIndex, event->globalPos());
+            m_menuOpen = false;
+            setHovered(underMouse());
+        }
         event->accept();
     }
 
@@ -157,8 +186,9 @@ private:
     QByteArray m_dragToken;
     ContextMenuHandler m_contextMenuHandler;
     DropHandler m_dropHandler;
-    bool m_dragActive = false;
     bool m_dropTarget = false;
+    bool m_hovered = false;
+    bool m_menuOpen = false;
 };
 
 namespace {
@@ -392,6 +422,96 @@ private:
     QPixmap m_pixmap;
     QSizeF m_pageSizePoints;
     QMarginsF m_marginsPoints;
+};
+
+// "Aclarar": flattens uneven photo shading and boosts contrast so a camera
+// photo of a page reads closer to a flatbed scan. The slider re-runs the
+// enhancement (debounced) on the low-res thumbnail already on screen, so the
+// preview stays responsive; the full-resolution pass only happens on Apply.
+class LightenPageDialog final : public QDialog
+{
+public:
+    LightenPageDialog(const QImage &previewSource, int initialAmount,
+                      QWidget *parent = nullptr)
+        : QDialog(parent)
+        , m_previewSource(previewSource)
+        , m_previewLabel(new QLabel(this))
+        , m_slider(new QSlider(Qt::Horizontal, this))
+        , m_amountLabel(new QLabel(this))
+    {
+        setWindowTitle(viewerText("Lighten Page"));
+        resize(480, 560);
+
+        auto *dialogLayout = new QVBoxLayout(this);
+        m_previewLabel->setAlignment(Qt::AlignCenter);
+        m_previewLabel->setMinimumSize(300, 380);
+        m_previewLabel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+        m_previewLabel->setStyleSheet(
+            QStringLiteral("background: white; border: 1px solid #667085;"));
+        dialogLayout->addWidget(m_previewLabel, 1);
+
+        auto *sliderLayout = new QHBoxLayout;
+        sliderLayout->addWidget(new QLabel(viewerText("Amount:"), this));
+        m_slider->setRange(0, 100);
+        m_slider->setValue(initialAmount);
+        sliderLayout->addWidget(m_slider, 1);
+        m_amountLabel->setMinimumWidth(44);
+        m_amountLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        sliderLayout->addWidget(m_amountLabel);
+        dialogLayout->addLayout(sliderLayout);
+
+        auto *buttons = new QDialogButtonBox(
+            QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
+        buttons->button(QDialogButtonBox::Ok)->setText(viewerText("Apply"));
+        buttons->button(QDialogButtonBox::Cancel)->setText(viewerText("Cancel"));
+        connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
+        connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
+        dialogLayout->addWidget(buttons);
+
+        m_previewTimer.setSingleShot(true);
+        m_previewTimer.setInterval(120);
+        connect(&m_previewTimer, &QTimer::timeout, this, &LightenPageDialog::updatePreview);
+        connect(m_slider, &QSlider::valueChanged, this, [this](int value) {
+            m_amountLabel->setText(QStringLiteral("%1%").arg(value));
+            m_previewTimer.start();
+        });
+
+        m_amountLabel->setText(QStringLiteral("%1%").arg(initialAmount));
+        updatePreview();
+    }
+
+    int amount() const { return m_slider->value(); }
+
+protected:
+    void resizeEvent(QResizeEvent *event) override
+    {
+        QDialog::resizeEvent(event);
+        renderPreview();
+    }
+
+private:
+    void updatePreview()
+    {
+        const QImage enhanced =
+            ImageEnhancement::aclararPapel(m_previewSource, m_slider->value());
+        m_previewPixmap = QPixmap::fromImage(enhanced);
+        renderPreview();
+    }
+
+    void renderPreview()
+    {
+        if (m_previewPixmap.isNull())
+            return;
+        m_previewLabel->setPixmap(m_previewPixmap.scaled(
+            m_previewLabel->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    }
+
+    QImage m_previewSource;
+    QPixmap m_previewPixmap;
+    QLabel *m_previewLabel;
+    QSlider *m_slider;
+    QLabel *m_amountLabel;
+    QTimer m_previewTimer;
 };
 
 class CropPagesDialog final : public QDialog
@@ -702,6 +822,7 @@ PdfViewerWidget::PdfViewerWidget(const QString &filePath, int pageRenderWidth,
     m_scrollArea->setAlignment(Qt::AlignHCenter | Qt::AlignTop);
     m_scrollArea->setWidget(m_pagesContainer);
     m_scrollArea->viewport()->installEventFilter(this);
+    m_pagesContainer->installEventFilter(this);
 
     const QColor baseColor = palette().color(QPalette::Base);
     const QColor canvasColor = baseColor.lightness() >= 128
@@ -1050,8 +1171,6 @@ void PdfViewerWidget::onDocumentLoaded(bool valid,
         m_pageCountLabel->setText(QStringLiteral("/ %1").arg(pageSizes.size()));
         m_pageSelectionCombo->setEnabled(true);
     }
-    m_selectedPages.insert(0);
-    m_pageSelectionAnchor = 0;
     setSelectionMode(m_selectionMode);
     syncNavigationControls();
 
@@ -1211,16 +1330,24 @@ void PdfViewerWidget::rebuildPageLayout()
             geometry = QRect(gapLeft, qMin(previous->y(), next->y()),
                              qMax(10, gapRight - gapLeft + 1),
                              qMax(previous->height(), next->height()));
-        } else if (nextVisible) {
-            const int gapTop = previousVisible ? previous->geometry().bottom() + 1
-                                               : qMax(0, next->y() - kPageSpacing);
-            const int gapBottom = next->y() - 1;
-            geometry = QRect(next->x(), gapTop, next->width(),
-                             qMax(10, gapBottom - gapTop + 1));
+        } else if (previousVisible) {
+            // Row wrap or end of list: keep the indicator vertical, anchored to
+            // the right edge of the last page before the gap (Acrobat/Foxit
+            // style) instead of a horizontal bar above/below a row.
+            geometry = QRect(previous->geometry().right() + 1, previous->y(),
+                             qMax(10, kPageSpacing), previous->height());
         } else {
-            geometry = QRect(previous->x(), previous->geometry().bottom() + 1,
-                             previous->width(), kPageSpacing);
+            // insertionIndex == 0: vertical indicator to the left of the very
+            // first page.
+            geometry = QRect(qMax(0, next->x() - kPageSpacing), next->y(),
+                             qMax(10, kPageSpacing), next->height());
         }
+        // The true gap is only ~kPageSpacing wide, too thin a target to
+        // reliably hover. Pad the widget's hit area symmetrically into the
+        // neighboring pages (raise() below keeps it on top there) without
+        // moving the drawn line, which stays centered on the widget.
+        constexpr int kHoverHitPadding = 10;
+        geometry = geometry.adjusted(-kHoverHitPadding, 0, kHoverHitPadding, 0);
         placeholder->setGeometry(geometry);
         placeholder->show();
         placeholder->raise();
@@ -1467,7 +1594,6 @@ void PdfViewerWidget::setSelectionMode(SelectionMode mode)
         }
         rebuildPageLayout();
     }
-    const bool modeChanged = m_selectionMode != mode;
     m_selectionMode = mode;
 
     if (m_selectPageButton)
@@ -1476,12 +1602,6 @@ void PdfViewerWidget::setSelectionMode(SelectionMode mode)
         m_selectRegionButton->setChecked(mode == SelectionMode::Region);
     if (m_pageSelectionCombo)
         m_pageSelectionCombo->setVisible(mode == SelectionMode::Page);
-
-    if (modeChanged && mode == SelectionMode::Page && m_selectedPages.isEmpty()
-        && m_currentPageIndex >= 0) {
-        m_selectedPages.insert(m_currentPageIndex);
-        m_pageSelectionAnchor = m_currentPageIndex;
-    }
 
     for (QLabel *label : m_pageLabels) {
         label->setCursor(mode == SelectionMode::Region
@@ -1530,17 +1650,22 @@ void PdfViewerWidget::showPageContextMenu(int pageIndex, const QPoint &globalPos
     copyAction->setShortcut(QKeySequence::Copy);
     menu.addSeparator();
     QAction *extractAction = menu.addAction(tr("Extract PDF…"));
+    menu.addSeparator();
+    QAction *lightenAction = menu.addAction(tr("Lighten Page…"));
     const bool canCopy = m_valid && !m_transformInProgress && !m_saveInProgress
                          && !m_selectedPages.isEmpty();
     copyAction->setEnabled(canCopy);
     cutAction->setEnabled(canCopy && m_selectedPages.size() < m_pageLabels.size());
     extractAction->setEnabled(canCopy);
+    lightenAction->setEnabled(canCopy);
 
     QAction *selectedAction = menu.exec(globalPosition);
     if (selectedAction == cutAction)
         copySelectedPages(/*cut=*/true);
     else if (selectedAction == copyAction)
         copySelectedPages(/*cut=*/false);
+    else if (selectedAction == lightenAction)
+        lightenSelectedPage();
     else if (selectedAction == extractAction)
         extractSelectedPages();
 }
@@ -1590,17 +1715,9 @@ void PdfViewerWidget::startSelectedPageDrag(QLabel *sourceLabel)
         drag->setHotSpot(preview.rect().center());
     }
 
-    setPlaceholderDragActive(true);
     sourceLabel->setCursor(Qt::ClosedHandCursor);
     drag->exec(Qt::MoveAction);
     sourceLabel->setCursor(Qt::OpenHandCursor);
-    setPlaceholderDragActive(false);
-}
-
-void PdfViewerWidget::setPlaceholderDragActive(bool active)
-{
-    for (PdfInsertionPlaceholder *placeholder : m_pagePlaceholders)
-        placeholder->setDragActive(active);
 }
 
 void PdfViewerWidget::moveSelectedPagesTo(int insertionIndex)
@@ -1961,12 +2078,10 @@ void PdfViewerWidget::rebuildPagesAfterStructure(
         if (pageIndex >= 0)
             m_selectedPages.insert(pageIndex);
     }
-    if (m_selectedPages.isEmpty() && !m_pageIds.isEmpty())
-        m_selectedPages.insert(qBound(0, m_currentPageIndex, m_pageIds.size() - 1));
     QVector<int> sortedSelection(m_selectedPages.cbegin(), m_selectedPages.cend());
     std::sort(sortedSelection.begin(), sortedSelection.end());
     m_currentPageIndex = sortedSelection.isEmpty() ? 0 : sortedSelection.first();
-    m_pageSelectionAnchor = m_currentPageIndex;
+    m_pageSelectionAnchor = sortedSelection.isEmpty() ? -1 : sortedSelection.first();
     m_regionPageIndex = -1;
     m_regionSelection = {};
 
@@ -2159,6 +2274,81 @@ void PdfViewerWidget::cropSelectedRegion()
                 }
             },
             Qt::QueuedConnection);
+        });
+    connect(thread, &QThread::finished, thread, &QThread::deleteLater);
+    thread->start();
+}
+
+void PdfViewerWidget::lightenSelectedPage()
+{
+    if (!m_valid || m_transformInProgress || m_saveInProgress
+        || m_selectedPages.isEmpty()) {
+        return;
+    }
+
+    const int pageIndex = *std::min_element(m_selectedPages.cbegin(), m_selectedPages.cend());
+    if (pageIndex < 0 || pageIndex >= m_pageLabels.size())
+        return;
+
+    const QImage previewSource = m_pageLabels[pageIndex]->pixmap().toImage();
+    LightenPageDialog dialog(previewSource, /*initialAmount=*/50, this);
+    if (dialog.exec() != QDialog::Accepted)
+        return;
+
+    const int amount = dialog.amount();
+    if (amount <= 0)
+        return;
+
+    const QSizeF pageSizePoints = pageSize(pageIndex);
+
+    // Phase 1 (this thread): render the page at high resolution and run the
+    // enhancement — no document mutation yet, so m_transformInProgress is
+    // toggled back off before phase 2 hands off to
+    // applyPageStructureChange(), which manages its own busy state exactly
+    // like insertPdfAt() does for its two phases.
+    m_transformInProgress = true;
+    emit operationInProgressChanged(true);
+    syncEditControls();
+
+    const std::shared_ptr<PdfDocument> document = m_document;
+    const QPointer<PdfViewerWidget> weakSelf(this);
+    const QVector<quint64> beforePageIds = m_pageIds;
+    const quint64 newPageId = m_nextPageId++;
+    QVector<quint64> afterPageIds = m_pageIds;
+    afterPageIds[pageIndex] = newPageId;
+    const QVector<quint64> archivedPageIds{newPageId};
+    const QVector<quint64> selectedPageIds{newPageId};
+
+    QThread *thread = QThread::create(
+        [weakSelf, document, pageIndex, amount, pageSizePoints, beforePageIds,
+         afterPageIds, archivedPageIds, selectedPageIds]() {
+            constexpr double kEnhanceDpi = 300.0;
+            const int renderWidthPx = qMax(
+                1, qRound(pageSizePoints.width() / 72.0 * kEnhanceDpi));
+            const QImage rendered = document->renderPage(pageIndex, renderWidthPx);
+            const QImage enhanced = ImageEnhancement::aclararPapel(rendered, amount);
+            const QByteArray archive =
+                PdfDocument::createImagePageArchive(enhanced, pageSizePoints);
+            QMetaObject::invokeMethod(
+                qApp,
+                [weakSelf, archive, beforePageIds, afterPageIds, archivedPageIds,
+                 selectedPageIds]() {
+                    if (!weakSelf)
+                        return;
+                    weakSelf->m_transformInProgress = false;
+                    emit weakSelf->operationInProgressChanged(false);
+                    weakSelf->syncEditControls();
+                    if (archive.isEmpty()) {
+                        QMessageBox::warning(
+                            weakSelf, viewerText("Lighten Page"),
+                            viewerText("The page could not be enhanced."));
+                        return;
+                    }
+                    weakSelf->applyPageStructureChange(
+                        viewerText("Lighten page"), beforePageIds, afterPageIds,
+                        archivedPageIds, archive, selectedPageIds);
+                },
+                Qt::QueuedConnection);
         });
     connect(thread, &QThread::finished, thread, &QThread::deleteLater);
     thread->start();
@@ -2579,6 +2769,18 @@ bool PdfViewerWidget::eventFilter(QObject *watched, QEvent *event)
         if (event->type() == QEvent::MouseButtonRelease
             && m_selectionMode == SelectionMode::Page) {
             m_pageDragSourceIndex = -1;
+        }
+    }
+
+    if (watched == m_pagesContainer && event->type() == QEvent::MouseButtonPress
+        && m_selectionMode == SelectionMode::Page) {
+        auto *mouseEvent = static_cast<QMouseEvent *>(event);
+        if (mouseEvent->button() == Qt::LeftButton && !m_selectedPages.isEmpty()) {
+            // A click that lands directly on the canvas (not on a page or a
+            // placeholder) is empty space: clear the selection.
+            m_selectedPages.clear();
+            m_pageSelectionAnchor = -1;
+            updateSelectionOverlays();
         }
     }
 

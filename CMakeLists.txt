@@ -78,6 +78,71 @@ FetchContent_MakeAvailable(pdfium)
 
 find_package(PDFium REQUIRED PATHS ${pdfium_SOURCE_DIR} NO_DEFAULT_PATH)
 
+# OpenCV (Apache-2.0, same license as this project) backs the page
+# image-enhancement tools ("Aclarar" and friends). It's built from its
+# pinned, hash-verified source release rather than relying on a
+# system-installed copy, matching the reproducible approach used for PDFium
+# above. Only the core+imgproc modules are built (everything these tools
+# need) and every optional codec/GUI/acceleration backend is switched off,
+# since a default OpenCV build pulls in ffmpeg, gstreamer, and similar
+# dependencies this app never uses.
+set(OPENCV_VERSION "5.0.0")
+FetchContent_Declare(opencv
+    URL "https://github.com/opencv/opencv/archive/refs/tags/${OPENCV_VERSION}.tar.gz"
+    URL_HASH SHA256=b0528f5a1d379d59d4701cb28c36e22214cc51cf64594e5b56f2d3e6c0233095
+)
+
+set(BUILD_LIST "core,imgproc" CACHE STRING "" FORCE)
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(BUILD_PERF_TESTS OFF CACHE BOOL "" FORCE)
+set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(BUILD_DOCS OFF CACHE BOOL "" FORCE)
+set(BUILD_opencv_apps OFF CACHE BOOL "" FORCE)
+set(BUILD_JAVA OFF CACHE BOOL "" FORCE)
+set(BUILD_opencv_python2 OFF CACHE BOOL "" FORCE)
+set(BUILD_opencv_python3 OFF CACHE BOOL "" FORCE)
+set(WITH_FFMPEG OFF CACHE BOOL "" FORCE)
+set(WITH_GTK OFF CACHE BOOL "" FORCE)
+set(WITH_GTK_2_X OFF CACHE BOOL "" FORCE)
+set(WITH_GSTREAMER OFF CACHE BOOL "" FORCE)
+set(WITH_QT OFF CACHE BOOL "" FORCE)
+set(WITH_OPENEXR OFF CACHE BOOL "" FORCE)
+set(WITH_TIFF OFF CACHE BOOL "" FORCE)
+set(WITH_JPEG OFF CACHE BOOL "" FORCE)
+set(WITH_PNG OFF CACHE BOOL "" FORCE)
+set(WITH_WEBP OFF CACHE BOOL "" FORCE)
+set(WITH_OPENJPEG OFF CACHE BOOL "" FORCE)
+set(WITH_IPP OFF CACHE BOOL "" FORCE)
+set(WITH_ITT OFF CACHE BOOL "" FORCE)
+set(WITH_TBB OFF CACHE BOOL "" FORCE)
+set(WITH_OPENCL OFF CACHE BOOL "" FORCE)
+set(WITH_PROTOBUF OFF CACHE BOOL "" FORCE)
+set(WITH_QUIRC OFF CACHE BOOL "" FORCE)
+set(WITH_V4L OFF CACHE BOOL "" FORCE)
+set(OPENCV_GENERATE_PKGCONFIG OFF CACHE BOOL "" FORCE)
+
+# EXCLUDE_FROM_ALL keeps OpenCV's own install() rules (headers, .a files,
+# CMake package config) out of `cmake --install` for this project — without
+# it they'd get pulled in as a side effect of add_subdirectory() and pollute
+# the release packaging. Populate+add_subdirectory (rather than
+# FetchContent_MakeAvailable) is the portable way to pass EXCLUDE_FROM_ALL
+# down at this project's CMake 3.21 floor.
+#
+# CMAKE_AUTOMOC/CMAKE_AUTOUIC (set ON above for cualpdf's own Qt sources) are
+# directory-scoped and would otherwise leak into OpenCV's non-Qt subdirectory,
+# where CMake mistakes its custom-generated headers (e.g.
+# opencl_kernels_core.hpp) for AUTOMOC/AUTOUIC input and breaks the build.
+set(CMAKE_AUTOMOC OFF)
+set(CMAKE_AUTOUIC OFF)
+FetchContent_GetProperties(opencv)
+if(NOT opencv_POPULATED)
+    FetchContent_Populate(opencv)
+    add_subdirectory(${opencv_SOURCE_DIR} ${opencv_BINARY_DIR} EXCLUDE_FROM_ALL)
+endif()
+set(CMAKE_AUTOMOC ON)
+set(CMAKE_AUTOUIC ON)
+
 qt_add_executable(cualpdf
     src/main.cpp
     src/logger.cpp
@@ -91,6 +156,8 @@ qt_add_executable(cualpdf
     src/pdfdocument.h
     src/foldercontentmodel.cpp
     src/foldercontentmodel.h
+    src/imageenhancement.cpp
+    src/imageenhancement.h
     src/pdfviewerwidget.cpp
     src/pdfviewerwidget.h
     src/pdflistitemdelegate.cpp
@@ -107,8 +174,21 @@ qt_add_executable(cualpdf
     src/tipsdialog.h
 )
 
-target_link_libraries(cualpdf PRIVATE Qt6::Widgets pdfium)
+target_link_libraries(cualpdf PRIVATE Qt6::Widgets pdfium opencv_core opencv_imgproc)
 target_include_directories(cualpdf PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+
+# OpenCV, built as a raw add_subdirectory() above (not an installed package
+# with its own Config.cmake), does not export its headers as target usage
+# requirements the way `pdfium` does — so its include paths need adding by
+# hand: each built module's public headers, plus the top build directory
+# where OpenCV generates opencv2/opencv_modules.hpp and cvconfig.h.
+target_include_directories(cualpdf PRIVATE
+    "${CMAKE_BINARY_DIR}"
+    "${opencv_SOURCE_DIR}/modules/core/include"
+    "${opencv_SOURCE_DIR}/modules/imgproc/include"
+    "${opencv_SOURCE_DIR}/modules/flann/include"
+    "${opencv_SOURCE_DIR}/modules/geometry/include"
+)
 
 include(CTest)
 if(BUILD_TESTING)

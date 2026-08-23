@@ -52,6 +52,11 @@ public:
     bool restorePageStates(const QVector<PdfPageState> &states);
     QByteArray exportPages(const QVector<int> &pageIndexes) const;
     static QByteArray createBlankPageArchive(const QSizeF &pageSize);
+    // Builds a single-page PDF archive whose page is `pageSize` (points) and
+    // whose entire content is `image`, scaled to fill it. Used to swap a
+    // page's content for a raster result (e.g. after "Aclarar") via the same
+    // archive-import path insert/paste already use, so it gets undo for free.
+    static QByteArray createImagePageArchive(const QImage &image, const QSizeF &pageSize);
     static bool mergeFiles(const QStringList &inputPaths, const QString &outputPath,
                            QString *failedInputPath, QString *fileErrorMessage);
     bool restorePageStructure(const QVector<quint64> &currentPageIds,
