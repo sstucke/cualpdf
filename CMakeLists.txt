@@ -178,8 +178,17 @@ if(WIN32)
                     LINK_LIBRARIES INTERFACE_LINK_LIBRARIES)
                 get_target_property(_cualpdf_opencv_link_libs
                     ${_cualpdf_opencv_target} ${_cualpdf_link_libs_property})
+                message(STATUS
+                    "cualpdf: ${_cualpdf_opencv_target} ${_cualpdf_link_libs_property} = ${_cualpdf_opencv_link_libs}")
                 if(_cualpdf_opencv_link_libs)
-                    list(REMOVE_ITEM _cualpdf_opencv_link_libs dl m pthread rt)
+                    # CMake stores a STATIC library's PRIVATE link
+                    # dependencies wrapped as $<LINK_ONLY:name>, not the bare
+                    # name — a plain list(REMOVE_ITEM ... pthread) silently
+                    # doesn't match that and was a no-op (confirmed by CI
+                    # still failing after two attempts at this). Match both
+                    # forms.
+                    list(FILTER _cualpdf_opencv_link_libs EXCLUDE REGEX
+                        "^(\\$<LINK_ONLY:)?(dl|m|pthread|rt)>?$")
                     set_target_properties(${_cualpdf_opencv_target} PROPERTIES
                         ${_cualpdf_link_libs_property} "${_cualpdf_opencv_link_libs}")
                 endif()
