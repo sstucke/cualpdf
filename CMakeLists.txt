@@ -94,6 +94,11 @@ FetchContent_Declare(opencv
 
 set(BUILD_LIST "core,imgproc" CACHE STRING "" FORCE)
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+# OpenCV defaults to the static MSVC CRT (/MT) for static-lib builds, but Qt
+# (and so cualpdf) links the dynamic CRT (/MD). Mixing the two in one
+# executable is a hard link error (LNK2038: RuntimeLibrary mismatch) — force
+# OpenCV to match Qt's choice instead.
+set(BUILD_WITH_STATIC_CRT OFF CACHE BOOL "" FORCE)
 set(BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(BUILD_PERF_TESTS OFF CACHE BOOL "" FORCE)
 set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
@@ -178,8 +183,6 @@ if(WIN32)
                     LINK_LIBRARIES INTERFACE_LINK_LIBRARIES)
                 get_target_property(_cualpdf_opencv_link_libs
                     ${_cualpdf_opencv_target} ${_cualpdf_link_libs_property})
-                message(STATUS
-                    "cualpdf: ${_cualpdf_opencv_target} ${_cualpdf_link_libs_property} = ${_cualpdf_opencv_link_libs}")
                 if(_cualpdf_opencv_link_libs)
                     # CMake stores a STATIC library's PRIVATE link
                     # dependencies wrapped as $<LINK_ONLY:name>, not the bare
