@@ -163,18 +163,27 @@ set(CMAKE_AUTOUIC ON)
 # `#pragma comment(lib, "pthread")` anywhere in the OpenCV sources either,
 # so this is purely a stray CMake dependency, not a real symbol need).
 # Strip it from the built targets' link requirements after the fact rather
-# than patching OpenCV's own build script.
+# than patching OpenCV's own build script. These land in LINK_LIBRARIES,
+# not INTERFACE_LINK_LIBRARIES: OpenCVModule.cmake's
+# ocv_target_link_libraries(${the_module} PRIVATE ${OPENCV_LINKER_LIBS} ...)
+# links them PRIVATE, but CMake still propagates a static library's private
+# link libraries to whatever finally links it (there's no way to fully
+# resolve a .lib archive's own external symbols without them), which is
+# how they were reaching cualpdf.exe's own link line.
 if(WIN32)
     foreach(_cualpdf_opencv_target IN ITEMS opencv_core opencv_imgproc
                                             opencv_flann opencv_geometry)
         if(TARGET ${_cualpdf_opencv_target})
-            get_target_property(_cualpdf_opencv_link_libs
-                ${_cualpdf_opencv_target} INTERFACE_LINK_LIBRARIES)
-            if(_cualpdf_opencv_link_libs)
-                list(REMOVE_ITEM _cualpdf_opencv_link_libs dl m pthread rt)
-                set_target_properties(${_cualpdf_opencv_target} PROPERTIES
-                    INTERFACE_LINK_LIBRARIES "${_cualpdf_opencv_link_libs}")
-            endif()
+            foreach(_cualpdf_link_libs_property IN ITEMS
+                    LINK_LIBRARIES INTERFACE_LINK_LIBRARIES)
+                get_target_property(_cualpdf_opencv_link_libs
+                    ${_cualpdf_opencv_target} ${_cualpdf_link_libs_property})
+                if(_cualpdf_opencv_link_libs)
+                    list(REMOVE_ITEM _cualpdf_opencv_link_libs dl m pthread rt)
+                    set_target_properties(${_cualpdf_opencv_target} PROPERTIES
+                        ${_cualpdf_link_libs_property} "${_cualpdf_opencv_link_libs}")
+                endif()
+            endforeach()
         endif()
     endforeach()
 endif()
