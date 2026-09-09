@@ -1,0 +1,10 @@
+#!/bin/sh
+
+message_file=$1
+
+if grep -Eiq '^[[:space:]]*(co[- ]?authored[- ]by|assisted[- ]by|generated[- ]by|ai[- ]assisted[- ]by)[[:space:]]*:' "$message_file"; then
+    echo "ERROR: La política de cualpdf prohíbe trailers de atribución a herramientas de IA." >&2
+    exit 1
+fi
+
+exit 0
