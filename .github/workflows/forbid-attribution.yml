@@ -1,0 +1,31 @@
+name: Política de autoría
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  verificar_atribuciones:
+    name: Verificar atribuciones automatizadas
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar historial
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Rechazar trailers de atribución automatizada
+        shell: bash
+        run: |
+          pattern='^[[:space:]]*(co[- ]?authored[- ]by|assisted[- ]by|generated[- ]by|ai[- ]assisted[- ]by|coautor(a)?|asistido[- ]por|generado[- ]por)[[:space:]]*:'
+          if git log --format='%B' HEAD | grep -Eiq "$pattern"; then
+            echo 'Se encontró un trailer de atribución prohibido en el historial.' >&2
+            exit 1
+          fi
