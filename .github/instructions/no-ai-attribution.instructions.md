@@ -1,3 +1,7 @@
+---
+applyTo: "**"
+---
+
 # Política para asistentes automatizados
 
 Las herramientas de inteligencia artificial pueden ayudar a modificar este repositorio, pero no son autoras, coautoras, colaboradoras ni contribuyentes.

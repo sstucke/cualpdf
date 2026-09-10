@@ -71,3 +71,6 @@ Testing/
 # Qt Creator local session/user state (machine-specific)
 .qtcreator/
 CMakeLists.txt.user
+
+# Per-machine AI tool overrides (shared settings stay tracked)
+.claude/settings.local.json

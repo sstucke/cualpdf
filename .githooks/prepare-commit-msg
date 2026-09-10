@@ -1,0 +1,14 @@
+#!/bin/sh
+# Strip AI authorship trailers before the commit is created.
+# commit-msg still rejects them if they are re-added.
+set -eu
+
+file=$1
+tmp=$(mktemp)
+trap 'rm -f "$tmp"' EXIT
+
+grep -Eiv \
+    -e '^[[:space:]]*(co[- ]?authored[- ]by|assisted[- ]by|generated[- ]by|ai[- ]assisted[- ]by|claude-session|coautor(a)?|asistido[- ]por|generado[- ]por)[[:space:]]*:' \
+    -e 'generated with[[:space:]]*\[?(claude|cursor|codex|copilot|gemini|grok|chatgpt|aider|devin|windsurf)' \
+    "$file" > "$tmp" || true
+cat "$tmp" > "$file"
