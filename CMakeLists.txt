@@ -2,6 +2,22 @@ cmake_minimum_required(VERSION 3.21)
 
 project(cualpdf LANGUAGES CXX)
 
+# Point Git at the committed hooks so developer machines reject AI
+# authorship trailers without a separate setup step. CI checkouts skip
+# this; GitHub Actions is not a working copy we want to reconfigure.
+if(NOT DEFINED ENV{GITHUB_ACTIONS}
+        AND EXISTS "${CMAKE_SOURCE_DIR}/.git"
+        AND EXISTS "${CMAKE_SOURCE_DIR}/.githooks/commit-msg")
+    find_package(Git QUIET)
+    if(Git_FOUND)
+        execute_process(
+            COMMAND "${GIT_EXECUTABLE}" config core.hooksPath .githooks
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+            ERROR_QUIET
+        )
+    endif()
+endif()
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)

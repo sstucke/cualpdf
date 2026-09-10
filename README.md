@@ -56,6 +56,14 @@ Bug reports and Pull Requests are welcome. However, to keep the project focused 
 * **Project Direction:** Development priorities are determined exclusively by the maintainers.
 * **Pull Requests:** PRs will be evaluated against code quality, architecture fit, and maintainer discretion.
 
+AI coding tools may be used while working on the project. They are not authors, co-authors, or contributors. After cloning, enable the committed Git hooks once:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+Configuring the CMake build also sets that path. Direct pushes to `main` are blocked; changes go through a pull request whose authorship check must pass.
+
 ---
 
 ## 🛠️ Built With

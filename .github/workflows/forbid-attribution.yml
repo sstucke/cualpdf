@@ -2,11 +2,7 @@ name: Política de autoría
 
 on:
   push:
-    branches:
-      - main
   pull_request:
-    branches:
-      - main
 
 permissions:
   contents: read
@@ -21,11 +17,8 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Rechazar trailers de atribución automatizada
+      - name: Rechazar atribuciones automatizadas
         shell: bash
         run: |
-          pattern='^[[:space:]]*(co[- ]?authored[- ]by|assisted[- ]by|generated[- ]by|ai[- ]assisted[- ]by|coautor(a)?|asistido[- ]por|generado[- ]por)[[:space:]]*:'
-          if git log --format='%B' HEAD | grep -Eiq "$pattern"; then
-            echo 'Se encontró un trailer de atribución prohibido en el historial.' >&2
-            exit 1
-          fi
+          chmod +x scripts/check-ai-attribution.sh
+          ./scripts/check-ai-attribution.sh --commits HEAD

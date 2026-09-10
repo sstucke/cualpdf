@@ -3,8 +3,10 @@
 Las herramientas de inteligencia artificial pueden ayudar a modificar este repositorio, pero no son autoras, coautoras, colaboradoras ni contribuyentes.
 
 - Nunca agregues atribuciones a una IA en commits, etiquetas, releases, pull requests, documentación, comentarios ni metadatos.
-- Nunca agregues trailers como `Co-authored-by`, `Assisted-by`, `Generated-by`, `AI-assisted-by` o equivalentes en ningún idioma.
+- Nunca agregues trailers como `Co-authored-by`, `Assisted-by`, `Generated-by`, `AI-assisted-by`, `Claude-Session` o equivalentes en ningún idioma.
 - Nunca uses el nombre, la cuenta o el correo de una IA como autor o committer.
+- Nunca uses `git commit --no-verify`, `git push --no-verify` ni flags equivalentes para saltarte los ganchos de esta política.
+- Si `git config core.hooksPath` no es `.githooks`, configuralo antes de commitear: `git config core.hooksPath .githooks` (o ejecutá `scripts/install-git-hooks.sh`).
 - Nunca hagas `commit`, `push`, reescrituras de historial, force-push, cambios de etiquetas, releases, remotos o configuración de GitHub sin una solicitud explícita del usuario para esa operación concreta.
 - La persona que dirige el trabajo conserva la autoría y la responsabilidad sobre los cambios asistidos.
 
