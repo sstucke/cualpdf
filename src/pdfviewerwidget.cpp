@@ -1222,8 +1222,76 @@ QSizeF PdfViewerWidget::pageSize(int pageIndex) const
     return QSizeF(kDefaultPageWidth, kDefaultPageHeight);
 }
 
+bool PdfViewerWidget::pageImageReady(int pageIndex) const
+{
+    if (pageIndex < 0 || pageIndex >= m_pageLabels.size())
+        return false;
+    const QLabel *label = m_pageLabels[pageIndex];
+    return m_renderedWidths[pageIndex] == label->width()
+           && !label->pixmap(Qt::ReturnByValue).isNull();
+}
+
+bool PdfViewerWidget::discreteChunkReady() const
+{
+    const int firstPage = discreteChunkStart();
+    const int lastPage = qMin(firstPage + discretePageCount(), m_pageLabels.size());
+    if (firstPage >= lastPage)
+        return false;
+    for (int pageIndex = firstPage; pageIndex < lastPage; ++pageIndex) {
+        if (!pageImageReady(pageIndex))
+            return false;
+    }
+    return true;
+}
+
+bool PdfViewerWidget::holdDiscretePage() const
+{
+    if (m_pageLayout != PageLayout::Discrete)
+        return false;
+    // The first paint has nothing to keep on screen. Later turns stay on the
+    // page already drawn until the destination bitmaps exist, so the view
+    // does not flash empty while PDFium renders.
+    bool somethingVisible = false;
+    for (const QLabel *label : m_pageLabels) {
+        if (!label->isHidden()) {
+            somethingVisible = true;
+            break;
+        }
+    }
+    return somethingVisible && !discreteChunkReady();
+}
+
+void PdfViewerWidget::scheduleDiscreteChunkRenders()
+{
+    const int firstPage = discreteChunkStart();
+    const int lastPage = qMin(firstPage + discretePageCount(), m_pageLabels.size());
+    for (int pageIndex = firstPage; pageIndex < lastPage; ++pageIndex)
+        scheduleRender(pageIndex, m_pageLabels[pageIndex]->width());
+}
+
+void PdfViewerWidget::revealDiscreteChunk()
+{
+    if (m_pageLayout != PageLayout::Discrete || !discreteChunkReady())
+        return;
+
+    const int firstPage = discreteChunkStart();
+    const int lastPage = qMin(firstPage + discretePageCount(), m_pageLabels.size());
+    for (int pageIndex = firstPage; pageIndex < lastPage; ++pageIndex) {
+        if (m_pageLabels[pageIndex]->isHidden()) {
+            rebuildPageLayout();
+            scrollToCurrentPage();
+            return;
+        }
+    }
+}
+
 void PdfViewerWidget::rebuildPageLayout()
 {
+    if (holdDiscretePage()) {
+        scheduleDiscreteChunkRenders();
+        return;
+    }
+
     while (QLayoutItem *item = m_pagesLayout->takeAt(0)) {
         if (QWidget *widget = item->widget())
             widget->hide();
@@ -1445,7 +1513,11 @@ void PdfViewerWidget::applyZoom()
         const int height = qMax(1, qRound(width * size.height() / size.width()));
         QLabel *label = m_pageLabels[i];
         if (label->width() != width || label->height() != height) {
-            label->clear();
+            const QPixmap current = label->pixmap(Qt::ReturnByValue);
+            if (!current.isNull()) {
+                label->setPixmap(current.scaled(width, height, Qt::KeepAspectRatio,
+                                                Qt::SmoothTransformation));
+            }
             label->setFixedSize(width, height);
             m_renderedWidths[i] = 0;
         }
@@ -2914,6 +2986,20 @@ void PdfViewerWidget::renderVisiblePages()
         syncNavigationControls();
         emit currentPageChanged(m_currentPageIndex);
     }
+
+    if (m_pageLayout == PageLayout::Discrete && discreteChunkReady()) {
+        const int count = discretePageCount();
+        const int firstPage = discreteChunkStart();
+        for (const int start : {firstPage - count, firstPage + count}) {
+            if (start < 0 || start >= m_pageLabels.size())
+                continue;
+            const int end = qMin(start + count, m_pageLabels.size());
+            for (int pageIndex = start; pageIndex < end; ++pageIndex) {
+                if (m_renderedWidths[pageIndex] != m_pageLabels[pageIndex]->width())
+                    scheduleRender(pageIndex, m_pageLabels[pageIndex]->width());
+            }
+        }
+    }
 }
 
 void PdfViewerWidget::scheduleRender(int pageIndex, int widthPx)
@@ -2975,4 +3061,5 @@ void PdfViewerWidget::onPageRendered(int pageIndex, int widthPx, int documentRev
     }
     label->setPixmap(QPixmap::fromImage(image));
     m_renderedWidths[pageIndex] = widthPx;
+    revealDiscreteChunk();
 }

@@ -184,6 +184,11 @@ private:
     QSize discreteGridShape() const;
     int discretePageCount() const;
     int discreteChunkStart() const;
+    bool pageImageReady(int pageIndex) const;
+    bool discreteChunkReady() const;
+    bool holdDiscretePage() const;
+    void scheduleDiscreteChunkRenders();
+    void revealDiscreteChunk();
     void scheduleRender(int pageIndex, int widthPx);
     void onPageRendered(int pageIndex, int widthPx, int documentRevision,
                         const QImage &image);
