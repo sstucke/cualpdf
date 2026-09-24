@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QByteArray>
+#include <QColor>
 #include <QImage>
 #include <QMarginsF>
 #include <QRect>
@@ -25,6 +26,13 @@ struct PdfPageObjectInfo {
     PdfPageObjectKind kind = PdfPageObjectKind::Unknown;
     QRect bounds;
     QString text;
+    QByteArray fontData;
+    QString fontFamily;
+    int fontWeight = 400;
+    bool italic = false;
+    int fontPixelSize = 0;
+    QPoint baseline;
+    QColor color = Qt::black;
 };
 
 struct PdfPageState {
