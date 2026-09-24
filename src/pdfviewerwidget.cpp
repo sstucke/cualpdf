@@ -19,11 +19,14 @@
 #include <QDragLeaveEvent>
 #include <QDir>
 #include <QDropEvent>
+#include <QFontDatabase>
+#include <QFontMetrics>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFileSystemWatcher>
 #include <QFrame>
+#include <QHash>
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -2415,6 +2418,21 @@ void PdfViewerWidget::commitObjectMove()
 }
 
 namespace {
+QString familyForPdfFont(const QByteArray &fontData, const QString &fallback)
+{
+    if (fontData.isEmpty())
+        return fallback;
+    static QHash<QByteArray, QString> loadedFamilies;
+    const auto found = loadedFamilies.constFind(fontData);
+    if (found != loadedFamilies.cend())
+        return found.value();
+    const int id = QFontDatabase::addApplicationFontFromData(fontData);
+    const QStringList families = QFontDatabase::applicationFontFamilies(id);
+    const QString family = families.isEmpty() ? fallback : families.first();
+    loadedFamilies.insert(fontData, family);
+    return family;
+}
+
 QString encodeObjectPath(const QVector<int> &path)
 {
     QStringList parts;
@@ -2454,11 +2472,30 @@ void PdfViewerWidget::editSelectedText()
     } else if (m_textEditor->parentWidget() != label) {
         m_textEditor->setParent(label);
     }
-    m_textEditor->setGeometry(object.bounds);
-    m_textEditor->setText(object.text);
     QFont font = m_textEditor->font();
-    font.setPixelSize(qMax(8, object.bounds.height() - 2));
+    const QString embeddedFamily = familyForPdfFont(object.fontData, object.fontFamily);
+    if (!embeddedFamily.isEmpty())
+        font.setFamily(embeddedFamily);
+    font.setPixelSize(qMax(1, object.fontPixelSize > 0 ? object.fontPixelSize
+                                                       : object.bounds.height()));
+    font.setWeight(static_cast<QFont::Weight>(qBound(1, object.fontWeight, 1000)));
+    font.setItalic(object.italic);
+    font.setStyleStrategy(QFont::PreferMatch);
     m_textEditor->setFont(font);
+    m_textEditor->setFrame(false);
+    m_textEditor->setTextMargins(0, 0, 0, 0);
+    m_textEditor->setAlignment(Qt::AlignLeft);
+    m_textEditor->setStyleSheet(QStringLiteral(
+        "QLineEdit { border: none; padding: 0px; margin: 0px; background: rgba(255,255,255,210); color: %1; }")
+                                    .arg(object.color.name(QColor::HexArgb)));
+
+    const QFontMetrics metrics(font);
+    const bool haveBaseline = object.fontPixelSize > 0;
+    const int top = haveBaseline ? object.baseline.y() - metrics.ascent() : object.bounds.top();
+    const int left = haveBaseline ? object.baseline.x() : object.bounds.left();
+    const int width = qMax(object.bounds.width(), metrics.horizontalAdvance(object.text) + metrics.averageCharWidth());
+    m_textEditor->setGeometry(left, top, width, metrics.ascent() + metrics.descent());
+    m_textEditor->setText(object.text);
     m_textEditor->setProperty("objectPage", m_objectPageIndex);
     m_textEditor->setProperty("objectPath", encodeObjectPath(object.path));
     m_textEditor->setProperty("originalText", object.text);

@@ -21,6 +21,7 @@
 #include <QSet>
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 
 namespace {
@@ -443,6 +444,77 @@ QString textOf(FPDF_PAGEOBJECT object, FPDF_TEXTPAGE textPage)
     return QString::fromUtf16(reinterpret_cast<const char16_t *>(buffer.constData()));
 }
 
+QByteArray fontBytes(FPDF_FONT font)
+{
+    size_t size = 0;
+    if (!font || !FPDFFont_GetFontData(font, nullptr, 0, &size) || size == 0)
+        return {};
+    QByteArray data(static_cast<int>(size), Qt::Uninitialized);
+    size_t written = 0;
+    if (!FPDFFont_GetFontData(font, reinterpret_cast<uint8_t *>(data.data()), size, &written)
+        || written == 0)
+        return {};
+    data.resize(static_cast<int>(written));
+    return data;
+}
+
+QString utf8FontName(size_t (*read)(FPDF_FONT, char *, size_t), FPDF_FONT font)
+{
+    const size_t bytes = read(font, nullptr, 0);
+    if (bytes < 2)
+        return {};
+    QByteArray buffer(static_cast<int>(bytes), Qt::Uninitialized);
+    read(font, buffer.data(), bytes);
+    return QString::fromUtf8(buffer.constData());
+}
+
+QPoint devicePoint(FPDF_PAGE page, const QSize &deviceSize, float pageX, float pageY)
+{
+    int x = 0;
+    int y = 0;
+    if (!FPDF_PageToDevice(page, 0, 0, deviceSize.width(), deviceSize.height(), /*rotate=*/0,
+                           pageX, pageY, &x, &y))
+        return {};
+    return QPoint(x, y);
+}
+
+void describeText(FPDF_PAGE page, const QSize &deviceSize, FPDF_PAGEOBJECT object,
+                  const PlacedMatrix &toPage, PdfPageObjectInfo *info)
+{
+    float fontSize = 0;
+    FPDFTextObj_GetFontSize(object, &fontSize);
+    FS_MATRIX local = {1, 0, 0, 1, 0, 0};
+    FPDFPageObj_GetMatrix(object, &local);
+    const float matrixScale = std::hypot(local.a, local.b);
+    float userScale = 1.f;
+    if (fontSize > 0.01f && !(matrixScale > fontSize * 0.5f && matrixScale < fontSize * 2.f))
+        userScale = matrixScale > 0.01f ? matrixScale : 1.f;
+    const double pageWidth = FPDF_GetPageWidthF(page);
+    const double pixelsPerPoint = pageWidth > 0.0 ? deviceSize.width() / pageWidth : 1.0;
+    info->fontPixelSize = qMax(1, qRound(fontSize * userScale * pixelsPerPoint));
+
+    const PlacedMatrix placed = multiply(toPage, {local.a, local.b, local.c, local.d, local.e, local.f});
+    info->baseline = devicePoint(page, deviceSize, placed.e, placed.f);
+
+    const FPDF_FONT font = FPDFTextObj_GetFont(object);
+    info->fontData = fontBytes(font);
+    info->fontFamily = utf8FontName(&FPDFFont_GetFamilyName, font);
+    if (info->fontFamily.isEmpty())
+        info->fontFamily = utf8FontName(&FPDFFont_GetBaseFontName, font);
+    const int weight = font ? FPDFFont_GetWeight(font) : -1;
+    info->fontWeight = weight > 0 ? weight : 400;
+    int italicAngle = 0;
+    info->italic = font && FPDFFont_GetItalicAngle(font, &italicAngle) && italicAngle != 0;
+
+    unsigned int red = 0;
+    unsigned int green = 0;
+    unsigned int blue = 0;
+    unsigned int alpha = 255;
+    if (FPDFPageObj_GetFillColor(object, &red, &green, &blue, &alpha))
+        info->color = QColor(static_cast<int>(red), static_cast<int>(green),
+                             static_cast<int>(blue), static_cast<int>(alpha));
+}
+
 void collectObjects(FPDF_PAGE page, const QSize &deviceSize, FPDF_TEXTPAGE textPage,
                     FPDF_PAGEOBJECT container, int containerCount, bool containerIsForm,
                     const PlacedMatrix &toPage, QVector<int> path,
@@ -474,8 +546,15 @@ void collectObjects(FPDF_PAGE page, const QSize &deviceSize, FPDF_TEXTPAGE textP
         const QRect device = boundsInPage(page, deviceSize, object, toPage);
         if (device.isEmpty())
             continue;
-        const QString text = kind == PdfPageObjectKind::Text ? textOf(object, textPage) : QString();
-        objects->append({objectPath, kind, device, text});
+        PdfPageObjectInfo info;
+        info.path = objectPath;
+        info.kind = kind;
+        info.bounds = device;
+        if (kind == PdfPageObjectKind::Text) {
+            info.text = textOf(object, textPage);
+            describeText(page, deviceSize, object, toPage, &info);
+        }
+        objects->append(info);
     }
 }
 
