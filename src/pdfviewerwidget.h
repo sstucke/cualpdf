@@ -184,6 +184,7 @@ private:
     QSize discreteGridShape() const;
     int discretePageCount() const;
     int discreteChunkStart() const;
+    bool pageInDiscreteChunk(int pageIndex) const;
     bool pageImageReady(int pageIndex) const;
     bool discreteChunkReady() const;
     bool holdDiscretePage() const;

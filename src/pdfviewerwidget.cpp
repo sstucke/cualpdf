@@ -1222,6 +1222,13 @@ QSizeF PdfViewerWidget::pageSize(int pageIndex) const
     return QSizeF(kDefaultPageWidth, kDefaultPageHeight);
 }
 
+bool PdfViewerWidget::pageInDiscreteChunk(int pageIndex) const
+{
+    const int firstPage = discreteChunkStart();
+    const int lastPage = qMin(firstPage + discretePageCount(), m_pageLabels.size());
+    return pageIndex >= firstPage && pageIndex < lastPage;
+}
+
 bool PdfViewerWidget::pageImageReady(int pageIndex) const
 {
     if (pageIndex < 0 || pageIndex >= m_pageLabels.size())
@@ -1285,12 +1292,37 @@ void PdfViewerWidget::revealDiscreteChunk()
     }
 }
 
+namespace {
+struct PaintingPaused {
+    QWidget *first = nullptr;
+    QWidget *second = nullptr;
+    PaintingPaused(QWidget *firstWidget, QWidget *secondWidget)
+        : first(firstWidget)
+        , second(secondWidget)
+    {
+        first->setUpdatesEnabled(false);
+        second->setUpdatesEnabled(false);
+    }
+    ~PaintingPaused()
+    {
+        second->setUpdatesEnabled(true);
+        first->setUpdatesEnabled(true);
+    }
+    PaintingPaused(const PaintingPaused &) = delete;
+    PaintingPaused &operator=(const PaintingPaused &) = delete;
+};
+}
+
 void PdfViewerWidget::rebuildPageLayout()
 {
     if (holdDiscretePage()) {
         scheduleDiscreteChunkRenders();
         return;
     }
+
+    // One paint for the whole swap. Hiding the old page and shrinking the
+    // canvas otherwise reaches the screen as an empty frame.
+    const PaintingPaused paused(m_scrollArea->viewport(), m_pagesContainer);
 
     while (QLayoutItem *item = m_pagesLayout->takeAt(0)) {
         if (QWidget *widget = item->widget())
@@ -1512,6 +1544,12 @@ void PdfViewerWidget::applyZoom()
             width = availableWidth;
         const int height = qMax(1, qRound(width * size.height() / size.width()));
         QLabel *label = m_pageLabels[i];
+        // While the next discrete page is still rendering, leave the picture
+        // on screen untouched. Resizing or replacing it is the leftover blink.
+        if (m_pageLayout == PageLayout::Discrete && !label->isHidden()
+            && !pageInDiscreteChunk(i) && !discreteChunkReady()) {
+            continue;
+        }
         if (label->width() != width || label->height() != height) {
             const QPixmap current = label->pixmap(Qt::ReturnByValue);
             if (!current.isNull()) {
@@ -2974,11 +3012,11 @@ void PdfViewerWidget::renderVisiblePages()
             foundVisible = true;
         }
 
-        const bool belongsToVisibleChunk = m_pageLayout == PageLayout::Discrete;
-        if (m_renderedWidths[i] != label->width()
-            && (belongsToVisibleChunk || labelRect.intersects(expanded))) {
+        const bool neededNow = m_pageLayout == PageLayout::Discrete
+                                   ? pageInDiscreteChunk(i)
+                                   : labelRect.intersects(expanded);
+        if (m_renderedWidths[i] != label->width() && neededNow)
             scheduleRender(i, label->width());
-        }
     }
 
     if (m_pageLayout == PageLayout::Continuous && visiblePage != m_currentPageIndex) {
@@ -3043,6 +3081,13 @@ void PdfViewerWidget::onPageRendered(int pageIndex, int widthPx, int documentRev
     QLabel *label = m_pageLabels[pageIndex];
     if (label->width() != widthPx)
         return;
+
+    // A render that finishes for the page still on screen, after the user
+    // already moved on, must not replace that pixmap.
+    if (m_pageLayout == PageLayout::Discrete && !label->isHidden()
+        && !pageInDiscreteChunk(pageIndex)) {
+        return;
+    }
 
     if (image.isNull()) {
         qWarning() << "Failed to render page" << pageIndex << "of" << m_filePath;
