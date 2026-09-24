@@ -813,6 +813,50 @@
         <translation>Seleccionar región</translation>
     </message>
     <message>
+        <source>Edit Objects</source>
+        <translation>Editar objetos</translation>
+    </message>
+    <message>
+        <source>Select and move text, drawings, and images</source>
+        <translation>Seleccionar y mover texto, dibujos e imágenes</translation>
+    </message>
+    <message>
+        <source>Edit Image…</source>
+        <translation>Editar imagen…</translation>
+    </message>
+    <message>
+        <source>Edit Image</source>
+        <translation>Editar imagen</translation>
+    </message>
+    <message>
+        <source>This image could not be exported.</source>
+        <translation>No se pudo exportar esta imagen.</translation>
+    </message>
+    <message>
+        <source>The image editor could not be opened.</source>
+        <translation>No se pudo abrir el editor de imágenes.</translation>
+    </message>
+    <message>
+        <source>Move object</source>
+        <translation>Mover objeto</translation>
+    </message>
+    <message>
+        <source>Edit image</source>
+        <translation>Editar imagen</translation>
+    </message>
+    <message>
+        <source>Edit Text</source>
+        <translation>Editar texto</translation>
+    </message>
+    <message>
+        <source>This text could not be changed. The font in the PDF does not contain those characters.</source>
+        <translation>No se pudo cambiar este texto. La fuente del PDF no tiene esos caracteres.</translation>
+    </message>
+    <message>
+        <source>Edit text</source>
+        <translation>Editar texto</translation>
+    </message>
+    <message>
         <source>Select a rectangular region</source>
         <translation>Seleccionar una región rectangular</translation>
     </message>
@@ -988,6 +1032,30 @@
     <message>
         <source>Windows</source>
         <translation>Ventanas</translation>
+    </message>
+    <message>
+        <source>Editing</source>
+        <translation>Edición</translation>
+    </message>
+    <message>
+        <source>Images on a page open in this program. Leave it empty to use the application your system uses for PNG files.</source>
+        <translation>Las imágenes de la página se abren en este programa. Dejalo vacío para usar la aplicación del sistema para archivos PNG.</translation>
+    </message>
+    <message>
+        <source>System default</source>
+        <translation>Predeterminado del sistema</translation>
+    </message>
+    <message>
+        <source>Browse…</source>
+        <translation>Examinar…</translation>
+    </message>
+    <message>
+        <source>Use system default</source>
+        <translation>Usar el predeterminado del sistema</translation>
+    </message>
+    <message>
+        <source>Choose an image editor</source>
+        <translation>Elegir un editor de imágenes</translation>
     </message>
     <message>
         <source>Preserve the file explorer when closing all tabs</source>

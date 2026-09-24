@@ -14,8 +14,11 @@
 
 class QAction;
 class QComboBox;
+class QFileSystemWatcher;
+class QTimer;
 class QGridLayout;
 class QLabel;
+class QLineEdit;
 class QScrollArea;
 class QSpinBox;
 class QToolButton;
@@ -87,8 +90,17 @@ private:
         QVector<quint64> afterPageIds;
         QVector<quint64> archivedPageIds;
         QByteArray pageArchive;
+        int objectPageIndex = -1;
+        QVector<int> objectPath;
+        QVector<float> beforeMatrix;
+        QVector<float> afterMatrix;
+        QByteArray beforeImagePng;
+        QByteArray afterImagePng;
+        QString beforeText;
+        QString afterText;
 
         bool changesPageStructure() const { return !beforePageIds.isEmpty(); }
+        bool changesPageObject() const { return objectPageIndex >= 0; }
     };
 
     enum class PageLayout {
@@ -107,6 +119,7 @@ private:
     enum class SelectionMode {
         Page,
         Region,
+        Objects,
     };
 
     void buildToolbar();
@@ -154,6 +167,14 @@ private:
     void setSelectionMode(SelectionMode mode);
     void applyPageSelectionCommand(int commandIndex);
     void updateSelectionOverlays();
+    void refreshPageObjects();
+    int objectAt(const QLabel *label, const QPoint &position) const;
+    void commitObjectMove();
+    void editSelectedImage();
+    void editSelectedText();
+    void commitTextEdit();
+    void reloadEditedImage();
+    void finishObjectHistory(bool success, int pageIndex, int targetHistoryPosition);
     void syncEditControls();
     void rotateSelectedPages(bool clockwise);
     void cropSelectedRegion();
@@ -224,6 +245,7 @@ private:
     QAction *m_fitTwoColumnsAction = nullptr;
     QToolButton *m_selectPageButton = nullptr;
     QToolButton *m_selectRegionButton = nullptr;
+    QToolButton *m_editObjectsButton = nullptr;
     QComboBox *m_pageSelectionCombo = nullptr;
     QToolButton *m_cropButton = nullptr;
     QToolButton *m_rotateCounterclockwiseButton = nullptr;
@@ -241,6 +263,21 @@ private:
     QRectF m_regionSelection;
     QPointF m_regionDragStart;
     bool m_draggingRegion = false;
+    QVector<PdfPageObjectInfo> m_pageObjects;
+    int m_objectPageIndex = -1;
+    int m_selectedObject = -1;
+    int m_hoveredObject = -1;
+    QLineEdit *m_textEditor = nullptr;
+    bool m_committingTextEdit = false;
+    QPoint m_objectPressPos;
+    QPoint m_objectDragOffset;
+    bool m_draggingObject = false;
+    QFileSystemWatcher *m_imageWatcher = nullptr;
+    QTimer *m_imageReloadTimer = nullptr;
+    QString m_imageEditPath;
+    int m_imageEditPage = -1;
+    QVector<int> m_imageEditObjectPath;
+    QByteArray m_imageEditApplied;
     bool m_organizePagesEnabled = false;
     QPoint m_pageDragStart;
     int m_pageDragSourceIndex = -1;

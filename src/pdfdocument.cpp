@@ -2,6 +2,7 @@
 
 #include <fpdfview.h>
 #include <fpdf_edit.h>
+#include <fpdf_text.h>
 #include <fpdf_ppo.h>
 #include <fpdf_save.h>
 #include <fpdf_transformpage.h>
@@ -301,6 +302,375 @@ QImage PdfDocument::renderPage(int pageIndex, int targetWidthPx) const
     FPDF_ClosePage(page);
 
     return copy;
+}
+
+namespace {
+PdfPageObjectKind objectKind(int type)
+{
+    switch (type) {
+    case FPDF_PAGEOBJ_TEXT:
+        return PdfPageObjectKind::Text;
+    case FPDF_PAGEOBJ_PATH:
+        return PdfPageObjectKind::Path;
+    case FPDF_PAGEOBJ_IMAGE:
+        return PdfPageObjectKind::Image;
+    case FPDF_PAGEOBJ_SHADING:
+        return PdfPageObjectKind::Shading;
+    case FPDF_PAGEOBJ_FORM:
+        return PdfPageObjectKind::Form;
+    default:
+        return PdfPageObjectKind::Unknown;
+    }
+}
+
+QRect deviceBounds(FPDF_PAGE page, const QSize &deviceSize, const FS_RECTF &bounds)
+{
+    int minX = 0;
+    int minY = 0;
+    int maxX = 0;
+    int maxY = 0;
+    bool any = false;
+    const double xs[4] = {bounds.left, bounds.right, bounds.right, bounds.left};
+    const double ys[4] = {bounds.top, bounds.top, bounds.bottom, bounds.bottom};
+    for (int i = 0; i < 4; ++i) {
+        int deviceX = 0;
+        int deviceY = 0;
+        if (!FPDF_PageToDevice(page, 0, 0, deviceSize.width(), deviceSize.height(),
+                               /*rotate=*/0, xs[i], ys[i], &deviceX, &deviceY))
+            continue;
+        if (!any) {
+            minX = maxX = deviceX;
+            minY = maxY = deviceY;
+            any = true;
+        } else {
+            minX = qMin(minX, deviceX);
+            minY = qMin(minY, deviceY);
+            maxX = qMax(maxX, deviceX);
+            maxY = qMax(maxY, deviceY);
+        }
+    }
+    if (!any || maxX <= minX || maxY <= minY)
+        return {};
+    return QRect(QPoint(minX, minY), QPoint(maxX, maxY));
+}
+
+QImage bitmapToImage(FPDF_BITMAP bitmap)
+{
+    if (!bitmap)
+        return {};
+    const int width = FPDFBitmap_GetWidth(bitmap);
+    const int height = FPDFBitmap_GetHeight(bitmap);
+    const int stride = FPDFBitmap_GetStride(bitmap);
+    auto *buffer = static_cast<uchar *>(FPDFBitmap_GetBuffer(bitmap));
+    if (!buffer || width <= 0 || height <= 0 || stride <= 0)
+        return {};
+
+    QImage::Format format = QImage::Format_Invalid;
+    switch (FPDFBitmap_GetFormat(bitmap)) {
+    case FPDFBitmap_BGRA:
+        format = QImage::Format_ARGB32;
+        break;
+    case FPDFBitmap_BGRx:
+        format = QImage::Format_RGB32;
+        break;
+    case FPDFBitmap_BGR:
+        format = QImage::Format_BGR888;
+        break;
+    case FPDFBitmap_Gray:
+        format = QImage::Format_Grayscale8;
+        break;
+    default:
+        return {};
+    }
+    return QImage(buffer, width, height, stride, format).copy();
+}
+
+struct PlacedMatrix {
+    float a = 1;
+    float b = 0;
+    float c = 0;
+    float d = 1;
+    float e = 0;
+    float f = 0;
+};
+
+PlacedMatrix multiply(const PlacedMatrix &parent, const PlacedMatrix &local)
+{
+    return {parent.a * local.a + parent.c * local.b,
+            parent.b * local.a + parent.d * local.b,
+            parent.a * local.c + parent.c * local.d,
+            parent.b * local.c + parent.d * local.d,
+            parent.a * local.e + parent.c * local.f + parent.e,
+            parent.b * local.e + parent.d * local.f + parent.f};
+}
+
+QRect boundsInPage(FPDF_PAGE page, const QSize &deviceSize, FPDF_PAGEOBJECT object,
+                   const PlacedMatrix &toPage)
+{
+    FS_RECTF bounds = {};
+    if (!FPDFPageObj_GetBounds(object, &bounds.left, &bounds.bottom, &bounds.right, &bounds.top))
+        return {};
+    const double xs[4] = {bounds.left, bounds.right, bounds.right, bounds.left};
+    const double ys[4] = {bounds.bottom, bounds.bottom, bounds.top, bounds.top};
+    FS_RECTF pageBounds = {};
+    bool any = false;
+    for (int i = 0; i < 4; ++i) {
+        const float x = toPage.a * xs[i] + toPage.c * ys[i] + toPage.e;
+        const float y = toPage.b * xs[i] + toPage.d * ys[i] + toPage.f;
+        if (!any) {
+            pageBounds.left = pageBounds.right = x;
+            pageBounds.bottom = pageBounds.top = y;
+            any = true;
+        } else {
+            pageBounds.left = qMin(pageBounds.left, x);
+            pageBounds.right = qMax(pageBounds.right, x);
+            pageBounds.bottom = qMin(pageBounds.bottom, y);
+            pageBounds.top = qMax(pageBounds.top, y);
+        }
+    }
+    return any ? deviceBounds(page, deviceSize, pageBounds) : QRect();
+}
+
+QString textOf(FPDF_PAGEOBJECT object, FPDF_TEXTPAGE textPage)
+{
+    if (!textPage)
+        return {};
+    const unsigned long bytes = FPDFTextObj_GetText(object, textPage, nullptr, 0);
+    if (bytes < sizeof(FPDF_WCHAR))
+        return {};
+    QVector<FPDF_WCHAR> buffer(static_cast<int>(bytes / sizeof(FPDF_WCHAR)));
+    FPDFTextObj_GetText(object, textPage, buffer.data(), bytes);
+    return QString::fromUtf16(reinterpret_cast<const char16_t *>(buffer.constData()));
+}
+
+void collectObjects(FPDF_PAGE page, const QSize &deviceSize, FPDF_TEXTPAGE textPage,
+                    FPDF_PAGEOBJECT container, int containerCount, bool containerIsForm,
+                    const PlacedMatrix &toPage, QVector<int> path,
+                    QVector<PdfPageObjectInfo> *objects)
+{
+    for (int index = 0; index < containerCount; ++index) {
+        const FPDF_PAGEOBJECT object = containerIsForm
+                                           ? FPDFFormObj_GetObject(container, static_cast<unsigned long>(index))
+                                           : FPDFPage_GetObject(page, index);
+        if (!object)
+            continue;
+        QVector<int> objectPath = path;
+        objectPath.append(index);
+        const PdfPageObjectKind kind = objectKind(FPDFPageObj_GetType(object));
+        if (kind == PdfPageObjectKind::Form) {
+            const int childCount = FPDFFormObj_CountObjects(object);
+            if (childCount <= 0)
+                continue;
+            PlacedMatrix formMatrix;
+            FS_MATRIX matrix = {};
+            if (FPDFPageObj_GetMatrix(object, &matrix))
+                formMatrix = {matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f};
+            collectObjects(page, deviceSize, textPage, object, childCount, true,
+                           multiply(toPage, formMatrix), objectPath, objects);
+            continue;
+        }
+        if (kind == PdfPageObjectKind::Unknown)
+            continue;
+        const QRect device = boundsInPage(page, deviceSize, object, toPage);
+        if (device.isEmpty())
+            continue;
+        const QString text = kind == PdfPageObjectKind::Text ? textOf(object, textPage) : QString();
+        objects->append({objectPath, kind, device, text});
+    }
+}
+
+FPDF_PAGEOBJECT pageObjectAt(FPDF_PAGE page, const QVector<int> &objectPath)
+{
+    if (!page || objectPath.isEmpty() || objectPath.first() < 0
+        || objectPath.first() >= FPDFPage_CountObjects(page))
+        return nullptr;
+    FPDF_PAGEOBJECT object = FPDFPage_GetObject(page, objectPath.first());
+    for (int depth = 1; object && depth < objectPath.size(); ++depth) {
+        if (FPDFPageObj_GetType(object) != FPDF_PAGEOBJ_FORM)
+            return nullptr;
+        const int index = objectPath.at(depth);
+        if (index < 0 || index >= FPDFFormObj_CountObjects(object))
+            return nullptr;
+        object = FPDFFormObj_GetObject(object, static_cast<unsigned long>(index));
+    }
+    return object;
+}
+
+QVector<float> matrixOf(FPDF_PAGEOBJECT object)
+{
+    FS_MATRIX matrix = {};
+    if (!FPDFPageObj_GetMatrix(object, &matrix))
+        return {};
+    return {matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f};
+}
+
+bool applyMatrix(FPDF_PAGE page, FPDF_PAGEOBJECT object, const QVector<float> &matrix)
+{
+    if (matrix.size() != 6)
+        return false;
+    FS_MATRIX value = {matrix[0], matrix[1], matrix[2], matrix[3], matrix[4], matrix[5]};
+    if (!FPDFPageObj_SetMatrix(object, &value))
+        return false;
+    return FPDFPage_GenerateContent(page);
+}
+}
+
+QVector<PdfPageObjectInfo> PdfDocument::pageObjects(int pageIndex,
+                                                   const QSize &deviceSize) const
+{
+    if (!m_document || deviceSize.width() <= 0 || deviceSize.height() <= 0)
+        return {};
+
+    const QMutexLocker locker(&pdfiumMutex());
+    const FPDF_PAGE page = FPDF_LoadPage(static_cast<FPDF_DOCUMENT>(m_document), pageIndex);
+    if (!page)
+        return {};
+
+    QVector<PdfPageObjectInfo> objects;
+    const FPDF_TEXTPAGE textPage = FPDFText_LoadPage(page);
+    collectObjects(page, deviceSize, textPage, nullptr, FPDFPage_CountObjects(page), false,
+                   {}, {}, &objects);
+    FPDFText_ClosePage(textPage);
+    FPDF_ClosePage(page);
+    return objects;
+}
+
+bool PdfDocument::translatePageObject(int pageIndex, const QVector<int> &objectPath,
+                                     const QSize &deviceSize, const QPoint &deltaPixels,
+                                     QVector<float> *beforeMatrix, QVector<float> *afterMatrix)
+{
+    if (!m_document || deviceSize.width() <= 0 || deviceSize.height() <= 0 || deltaPixels.isNull())
+        return false;
+
+    const QMutexLocker locker(&pdfiumMutex());
+    const FPDF_PAGE page = FPDF_LoadPage(static_cast<FPDF_DOCUMENT>(m_document), pageIndex);
+    if (!page)
+        return false;
+
+    const FPDF_PAGEOBJECT object = pageObjectAt(page, objectPath);
+    if (!object) {
+        FPDF_ClosePage(page);
+        return false;
+    }
+
+    double originX = 0.0;
+    double originY = 0.0;
+    double movedX = 0.0;
+    double movedY = 0.0;
+    const bool mapped = FPDF_DeviceToPage(page, 0, 0, deviceSize.width(), deviceSize.height(),
+                                          /*rotate=*/0, 0, 0, &originX, &originY)
+                        && FPDF_DeviceToPage(page, 0, 0, deviceSize.width(), deviceSize.height(),
+                                             /*rotate=*/0, deltaPixels.x(), deltaPixels.y(),
+                                             &movedX, &movedY);
+    const QVector<float> before = matrixOf(object);
+    bool applied = mapped && !before.isEmpty();
+    if (applied)
+        FPDFPageObj_Transform(object, 1, 0, 0, 1, movedX - originX, movedY - originY);
+    const QVector<float> after = matrixOf(object);
+    applied = applied && applyMatrix(page, object, after);
+    FPDF_ClosePage(page);
+    if (!applied)
+        return false;
+    if (beforeMatrix)
+        *beforeMatrix = before;
+    if (afterMatrix)
+        *afterMatrix = after;
+    return true;
+}
+
+bool PdfDocument::setPageObjectMatrix(int pageIndex, const QVector<int> &objectPath,
+                                     const QVector<float> &matrix)
+{
+    if (!m_document)
+        return false;
+
+    const QMutexLocker locker(&pdfiumMutex());
+    const FPDF_PAGE page = FPDF_LoadPage(static_cast<FPDF_DOCUMENT>(m_document), pageIndex);
+    if (!page)
+        return false;
+    const FPDF_PAGEOBJECT object = pageObjectAt(page, objectPath);
+    const bool applied = object && applyMatrix(page, object, matrix);
+    FPDF_ClosePage(page);
+    return applied;
+}
+
+QByteArray PdfDocument::pageObjectImagePng(int pageIndex, const QVector<int> &objectPath) const
+{
+    if (!m_document)
+        return {};
+
+    const QMutexLocker locker(&pdfiumMutex());
+    const FPDF_PAGE page = FPDF_LoadPage(static_cast<FPDF_DOCUMENT>(m_document), pageIndex);
+    if (!page)
+        return {};
+    const FPDF_PAGEOBJECT object = pageObjectAt(page, objectPath);
+    QByteArray png;
+    if (object && FPDFPageObj_GetType(object) == FPDF_PAGEOBJ_IMAGE) {
+        const FPDF_BITMAP bitmap = FPDFImageObj_GetBitmap(object);
+        const QImage image = bitmapToImage(bitmap);
+        FPDFBitmap_Destroy(bitmap);
+        if (!image.isNull()) {
+            QBuffer buffer(&png);
+            buffer.open(QIODevice::WriteOnly);
+            image.save(&buffer, "PNG");
+        }
+    }
+    FPDF_ClosePage(page);
+    return png;
+}
+
+bool PdfDocument::setPageObjectImagePng(int pageIndex, const QVector<int> &objectPath, const QByteArray &png)
+{
+    if (!m_document || png.isEmpty())
+        return false;
+
+    QImage image;
+    if (!image.loadFromData(png))
+        return false;
+    image = image.convertToFormat(QImage::Format_ARGB32);
+
+    const QMutexLocker locker(&pdfiumMutex());
+    const FPDF_PAGE page = FPDF_LoadPage(static_cast<FPDF_DOCUMENT>(m_document), pageIndex);
+    if (!page)
+        return false;
+    const FPDF_PAGEOBJECT object = pageObjectAt(page, objectPath);
+    if (!object || FPDFPageObj_GetType(object) != FPDF_PAGEOBJ_IMAGE) {
+        FPDF_ClosePage(page);
+        return false;
+    }
+
+    const FPDF_BITMAP bitmap = FPDFBitmap_Create(image.width(), image.height(), /*alpha=*/1);
+    if (!bitmap) {
+        FPDF_ClosePage(page);
+        return false;
+    }
+    auto *buffer = static_cast<uchar *>(FPDFBitmap_GetBuffer(bitmap));
+    const int stride = FPDFBitmap_GetStride(bitmap);
+    for (int y = 0; y < image.height(); ++y)
+        memcpy(buffer + y * stride, image.constScanLine(y), image.width() * 4);
+    const bool applied = FPDFImageObj_SetBitmap(nullptr, 0, object, bitmap)
+                         && FPDFPage_GenerateContent(page);
+    FPDFBitmap_Destroy(bitmap);
+    FPDF_ClosePage(page);
+    return applied;
+}
+
+bool PdfDocument::setPageObjectText(int pageIndex, const QVector<int> &objectPath, const QString &text)
+{
+    if (!m_document || text.isEmpty())
+        return false;
+
+    const QMutexLocker locker(&pdfiumMutex());
+    const FPDF_PAGE page = FPDF_LoadPage(static_cast<FPDF_DOCUMENT>(m_document), pageIndex);
+    if (!page)
+        return false;
+    const FPDF_PAGEOBJECT object = pageObjectAt(page, objectPath);
+    const bool applied = object
+                         && FPDFPageObj_GetType(object) == FPDF_PAGEOBJ_TEXT
+                         && FPDFText_SetText(object, reinterpret_cast<FPDF_WIDESTRING>(text.utf16()))
+                         && FPDFPage_GenerateContent(page);
+    FPDF_ClosePage(page);
+    return applied;
 }
 
 bool PdfDocument::rotatePages(const QVector<int> &pageIndexes, bool clockwise)

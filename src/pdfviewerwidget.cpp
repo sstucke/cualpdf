@@ -1,9 +1,11 @@
 #include "pdfviewerwidget.h"
 
+#include "appsettings.h"
 #include "imageenhancement.h"
 #include "pdfdocument.h"
 
 #include <QActionGroup>
+#include <QDesktopServices>
 #include <QApplication>
 #include <QButtonGroup>
 #include <QComboBox>
@@ -17,8 +19,10 @@
 #include <QDragLeaveEvent>
 #include <QDir>
 #include <QDropEvent>
+#include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFileSystemWatcher>
 #include <QFrame>
 #include <QGridLayout>
 #include <QGroupBox>
@@ -34,6 +38,7 @@
 #include <QPainterPath>
 #include <QPalette>
 #include <QPointer>
+#include <QProcess>
 #include <QPushButton>
 #include <QRadioButton>
 #include <QResizeEvent>
@@ -41,12 +46,14 @@
 #include <QScrollBar>
 #include <QSaveFile>
 #include <QSlider>
+#include <QStandardPaths>
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QStyle>
 #include <QThread>
 #include <QTimer>
 #include <QToolBar>
+#include <QUrl>
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <QWheelEvent>
@@ -749,6 +756,16 @@ public:
         update();
     }
 
+    void setObjectOverlay(const QVector<QRect> &bounds, int selectedIndex, int hoveredIndex,
+                          const QPoint &dragOffset)
+    {
+        m_objectBounds = bounds;
+        m_selectedObject = selectedIndex;
+        m_hoveredObject = hoveredIndex;
+        m_objectDragOffset = dragOffset;
+        update();
+    }
+
 protected:
     void paintEvent(QPaintEvent *event) override
     {
@@ -791,11 +808,27 @@ protected:
                                         handleSize, handleSize));
             }
         }
+
+        painter.setBrush(Qt::NoBrush);
+        for (int index = 0; index < m_objectBounds.size(); ++index) {
+            if (index != m_selectedObject && index != m_hoveredObject)
+                continue;
+            QRect bounds = m_objectBounds[index];
+            const bool selected = index == m_selectedObject;
+            if (selected)
+                bounds.translate(m_objectDragOffset);
+            painter.setPen(QPen(accent, selected ? 2.0 : 1.0));
+            painter.drawRect(bounds);
+        }
     }
 
 private:
     bool m_pageSelected = false;
     QRectF m_regionSelection;
+    QVector<QRect> m_objectBounds;
+    int m_selectedObject = -1;
+    int m_hoveredObject = -1;
+    QPoint m_objectDragOffset;
 };
 }
 
@@ -879,6 +912,14 @@ void PdfViewerWidget::buildToolbar()
     m_selectRegionButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     selectionGroup->addButton(m_selectRegionButton);
     toolbar->addWidget(m_selectRegionButton);
+
+    m_editObjectsButton = new QToolButton(toolbar);
+    m_editObjectsButton->setCheckable(true);
+    m_editObjectsButton->setText(tr("Edit Objects"));
+    m_editObjectsButton->setToolTip(tr("Select and move text, drawings, and images"));
+    m_editObjectsButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    selectionGroup->addButton(m_editObjectsButton);
+    toolbar->addWidget(m_editObjectsButton);
 
     m_pageSelectionCombo = new QComboBox(toolbar);
     m_pageSelectionCombo->setFixedWidth(110);
@@ -983,6 +1024,8 @@ void PdfViewerWidget::buildToolbar()
             [this]() { setSelectionMode(SelectionMode::Page); });
     connect(m_selectRegionButton, &QToolButton::clicked, this,
             [this]() { setSelectionMode(SelectionMode::Region); });
+    connect(m_editObjectsButton, &QToolButton::clicked, this,
+            [this]() { setSelectionMode(SelectionMode::Objects); });
     connect(m_pageSelectionCombo, &QComboBox::activated,
             this, &PdfViewerWidget::applyPageSelectionCommand);
 
@@ -1570,6 +1613,8 @@ void PdfViewerWidget::applyZoom()
         rebuildPageLayout();
         scrollToCurrentPage();
         renderVisiblePages();
+        if (m_selectionMode == SelectionMode::Objects)
+            refreshPageObjects();
     });
 }
 
@@ -1710,16 +1755,26 @@ void PdfViewerWidget::setSelectionMode(SelectionMode mode)
         m_selectPageButton->setChecked(mode == SelectionMode::Page);
     if (m_selectRegionButton)
         m_selectRegionButton->setChecked(mode == SelectionMode::Region);
+    if (m_editObjectsButton)
+        m_editObjectsButton->setChecked(mode == SelectionMode::Objects);
     if (m_pageSelectionCombo)
         m_pageSelectionCombo->setVisible(mode == SelectionMode::Page);
 
     for (QLabel *label : m_pageLabels) {
-        label->setCursor(mode == SelectionMode::Region
-                             ? Qt::CrossCursor
-                             : (m_organizePagesEnabled ? Qt::OpenHandCursor
-                                                      : Qt::PointingHandCursor));
+        label->setCursor(mode == SelectionMode::Objects
+                             ? Qt::ArrowCursor
+                             : (mode == SelectionMode::Region
+                                    ? Qt::CrossCursor
+                                    : (m_organizePagesEnabled ? Qt::OpenHandCursor
+                                                             : Qt::PointingHandCursor)));
+    }
+    if (mode != SelectionMode::Objects) {
+        m_selectedObject = -1;
+        m_draggingObject = false;
+        m_objectDragOffset = {};
     }
     updateSelectionOverlays();
+    refreshPageObjects();
 }
 
 void PdfViewerWidget::setOrganizePagesEnabled(bool enabled)
@@ -1762,6 +1817,13 @@ void PdfViewerWidget::showPageContextMenu(int pageIndex, const QPoint &globalPos
                                     && !m_regionSelection.isEmpty();
 
     QMenu menu(this);
+    QAction *editImageAction = nullptr;
+    if (m_selectionMode == SelectionMode::Objects && m_selectedObject >= 0
+        && m_selectedObject < m_pageObjects.size()
+        && m_pageObjects[m_selectedObject].kind == PdfPageObjectKind::Image) {
+        editImageAction = menu.addAction(tr("Edit Image…"));
+        menu.addSeparator();
+    }
     QAction *cutAction = menu.addAction(tr("Cut"));
     cutAction->setShortcut(QKeySequence::Cut);
     QAction *copyAction = menu.addAction(tr("Copy"));
@@ -1780,7 +1842,9 @@ void PdfViewerWidget::showPageContextMenu(int pageIndex, const QPoint &globalPos
     lightenAction->setEnabled(canLighten);
 
     QAction *selectedAction = menu.exec(globalPosition);
-    if (selectedAction == cutAction)
+    if (editImageAction && selectedAction == editImageAction)
+        editSelectedImage();
+    else if (selectedAction == cutAction)
         copySelectedPages(/*cut=*/true);
     else if (selectedAction == copyAction)
         copySelectedPages(/*cut=*/false);
@@ -2246,8 +2310,289 @@ void PdfViewerWidget::updateSelectionOverlays()
                                           && pageIndex == m_regionPageIndex
                                       ? m_regionSelection
                                       : QRectF());
+        if (m_selectionMode == SelectionMode::Objects && pageIndex == m_objectPageIndex) {
+            QVector<QRect> bounds;
+            bounds.reserve(m_pageObjects.size());
+            for (const PdfPageObjectInfo &object : m_pageObjects)
+                bounds.append(object.bounds);
+            label->setObjectOverlay(bounds, m_selectedObject, m_hoveredObject, m_objectDragOffset);
+        } else {
+            label->setObjectOverlay({}, -1, -1, {});
+        }
     }
     syncEditControls();
+}
+
+void PdfViewerWidget::refreshPageObjects()
+{
+    if (m_selectionMode != SelectionMode::Objects || !m_valid || !m_document
+        || m_currentPageIndex < 0 || m_currentPageIndex >= m_pageLabels.size()) {
+        m_pageObjects.clear();
+        m_objectPageIndex = -1;
+        updateSelectionOverlays();
+        return;
+    }
+
+    const QVector<int> keepPath = m_selectedObject >= 0 && m_selectedObject < m_pageObjects.size()
+                                     ? m_pageObjects[m_selectedObject].path
+                                     : QVector<int>();
+    QLabel *label = m_pageLabels[m_currentPageIndex];
+    m_pageObjects = m_document->pageObjects(m_currentPageIndex, label->size());
+    m_objectPageIndex = m_currentPageIndex;
+    m_selectedObject = -1;
+    for (int index = 0; index < m_pageObjects.size(); ++index) {
+        if (m_pageObjects[index].path == keepPath) {
+            m_selectedObject = index;
+            break;
+        }
+    }
+    updateSelectionOverlays();
+}
+
+int PdfViewerWidget::objectAt(const QLabel *label, const QPoint &position) const
+{
+    if (!label || label->property("pdfPageIndex").toInt() != m_objectPageIndex)
+        return -1;
+    // Text and images win over the lines of a table, which otherwise swallow the click.
+    int pathHit = -1;
+    for (int index = m_pageObjects.size() - 1; index >= 0; --index) {
+        if (!m_pageObjects[index].bounds.contains(position))
+            continue;
+        const PdfPageObjectKind kind = m_pageObjects[index].kind;
+        if (kind == PdfPageObjectKind::Text || kind == PdfPageObjectKind::Image)
+            return index;
+        if (pathHit < 0)
+            pathHit = index;
+    }
+    return pathHit;
+}
+
+void PdfViewerWidget::commitObjectMove()
+{
+    if (m_selectedObject < 0 || m_selectedObject >= m_pageObjects.size()
+        || m_objectDragOffset.isNull() || m_objectPageIndex < 0)
+        return;
+
+    const PdfPageObjectInfo object = m_pageObjects[m_selectedObject];
+    QLabel *label = m_pageLabels[m_objectPageIndex];
+    QVector<float> before;
+    QVector<float> after;
+    const bool moved = m_document->translatePageObject(
+        m_objectPageIndex, object.path, label->size(), m_objectDragOffset, &before, &after);
+    m_objectDragOffset = {};
+    if (!moved) {
+        updateSelectionOverlays();
+        return;
+    }
+
+    EditHistoryEntry entry;
+    entry.description = tr("Move object");
+    entry.objectPageIndex = m_objectPageIndex;
+    entry.objectPath = object.path;
+    entry.beforeMatrix = before;
+    entry.afterMatrix = after;
+    recordHistoryEntry(std::move(entry));
+    ++m_documentRevision;
+    m_renderedWidths[m_objectPageIndex] = 0;
+    refreshPageObjects();
+    scheduleRender(m_objectPageIndex, label->width());
+}
+
+namespace {
+QString encodeObjectPath(const QVector<int> &path)
+{
+    QStringList parts;
+    for (const int index : path)
+        parts.append(QString::number(index));
+    return parts.join(QLatin1Char('/'));
+}
+
+QVector<int> decodeObjectPath(const QString &text)
+{
+    QVector<int> path;
+    const QStringList parts = text.split(QLatin1Char('/'), Qt::SkipEmptyParts);
+    for (const QString &part : parts) {
+        bool ok = false;
+        const int index = part.toInt(&ok);
+        if (ok)
+            path.append(index);
+    }
+    return path;
+}
+}
+
+void PdfViewerWidget::editSelectedText()
+{
+    if (m_selectedObject < 0 || m_selectedObject >= m_pageObjects.size()
+        || m_objectPageIndex < 0 || m_objectPageIndex >= m_pageLabels.size())
+        return;
+    const PdfPageObjectInfo object = m_pageObjects[m_selectedObject];
+    if (object.kind != PdfPageObjectKind::Text)
+        return;
+
+    QLabel *label = m_pageLabels[m_objectPageIndex];
+    if (!m_textEditor) {
+        m_textEditor = new QLineEdit(label);
+        connect(m_textEditor, &QLineEdit::editingFinished, this, &PdfViewerWidget::commitTextEdit);
+        connect(m_textEditor, &QLineEdit::returnPressed, this, &PdfViewerWidget::commitTextEdit);
+    } else if (m_textEditor->parentWidget() != label) {
+        m_textEditor->setParent(label);
+    }
+    m_textEditor->setGeometry(object.bounds);
+    m_textEditor->setText(object.text);
+    QFont font = m_textEditor->font();
+    font.setPixelSize(qMax(8, object.bounds.height() - 2));
+    m_textEditor->setFont(font);
+    m_textEditor->setProperty("objectPage", m_objectPageIndex);
+    m_textEditor->setProperty("objectPath", encodeObjectPath(object.path));
+    m_textEditor->setProperty("originalText", object.text);
+    m_textEditor->show();
+    m_textEditor->setFocus();
+    m_textEditor->selectAll();
+}
+
+void PdfViewerWidget::commitTextEdit()
+{
+    if (!m_textEditor || m_committingTextEdit || !m_textEditor->isVisible())
+        return;
+    m_committingTextEdit = true;
+    const QString replacement = m_textEditor->text();
+    const QString original = m_textEditor->property("originalText").toString();
+    const int pageIndex = m_textEditor->property("objectPage").toInt();
+    const QVector<int> objectPath = decodeObjectPath(m_textEditor->property("objectPath").toString());
+    m_textEditor->hide();
+    m_committingTextEdit = false;
+    if (replacement.isEmpty() || replacement == original)
+        return;
+    if (!m_document->setPageObjectText(pageIndex, objectPath, replacement)) {
+        QMessageBox::warning(this, tr("Edit Text"),
+                             tr("This text could not be changed. The font in the PDF does not contain those characters."));
+        return;
+    }
+    EditHistoryEntry entry;
+    entry.description = tr("Edit text");
+    entry.objectPageIndex = pageIndex;
+    entry.objectPath = objectPath;
+    entry.beforeText = original;
+    entry.afterText = replacement;
+    recordHistoryEntry(std::move(entry));
+    ++m_documentRevision;
+    if (pageIndex < m_renderedWidths.size())
+        m_renderedWidths[pageIndex] = 0;
+    refreshPageObjects();
+    if (pageIndex >= 0 && pageIndex < m_pageLabels.size())
+        scheduleRender(pageIndex, m_pageLabels[pageIndex]->width());
+}
+
+void PdfViewerWidget::editSelectedImage()
+{
+    if (m_selectedObject < 0 || m_selectedObject >= m_pageObjects.size())
+        return;
+    const PdfPageObjectInfo object = m_pageObjects[m_selectedObject];
+    if (object.kind != PdfPageObjectKind::Image || m_objectPageIndex < 0)
+        return;
+
+    const QByteArray png = m_document->pageObjectImagePng(m_objectPageIndex, object.path);
+    if (png.isEmpty()) {
+        QMessageBox::warning(this, tr("Edit Image"),
+                             tr("This image could not be exported."));
+        return;
+    }
+
+    const QString directory = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
+    m_imageEditPath = QDir(directory).filePath(
+        QStringLiteral("cualpdf-image-%1.png").arg(encodeObjectPath(object.path).replace('/', '-')));
+    QFile file(m_imageEditPath);
+    if (!file.open(QIODevice::WriteOnly) || file.write(png) != png.size()) {
+        QMessageBox::warning(this, tr("Edit Image"),
+                             tr("This image could not be exported."));
+        return;
+    }
+    file.close();
+
+    m_imageEditPage = m_objectPageIndex;
+    m_imageEditObjectPath = object.path;
+    m_imageEditApplied = png;
+
+    if (!m_imageWatcher) {
+        m_imageWatcher = new QFileSystemWatcher(this);
+        connect(m_imageWatcher, &QFileSystemWatcher::fileChanged,
+                this, [this](const QString &) {
+                    if (m_imageReloadTimer)
+                        m_imageReloadTimer->start();
+                    if (!m_imageEditPath.isEmpty() && m_imageWatcher
+                        && !m_imageWatcher->files().contains(m_imageEditPath))
+                        m_imageWatcher->addPath(m_imageEditPath);
+                });
+    }
+    if (!m_imageReloadTimer) {
+        m_imageReloadTimer = new QTimer(this);
+        m_imageReloadTimer->setSingleShot(true);
+        m_imageReloadTimer->setInterval(400);
+        connect(m_imageReloadTimer, &QTimer::timeout, this, &PdfViewerWidget::reloadEditedImage);
+    }
+    if (!m_imageWatcher->files().contains(m_imageEditPath))
+        m_imageWatcher->addPath(m_imageEditPath);
+
+    const QString editor = AppSettings().imageEditorPath();
+    bool started = false;
+    if (editor.isEmpty())
+        started = QDesktopServices::openUrl(QUrl::fromLocalFile(m_imageEditPath));
+    else
+        started = QProcess::startDetached(editor, {m_imageEditPath});
+    if (!started) {
+        QMessageBox::warning(this, tr("Edit Image"),
+                             tr("The image editor could not be opened."));
+    }
+}
+
+void PdfViewerWidget::reloadEditedImage()
+{
+    if (m_imageEditPath.isEmpty() || m_imageEditPage < 0 || m_imageEditObjectPath.isEmpty())
+        return;
+    QFile file(m_imageEditPath);
+    if (!file.open(QIODevice::ReadOnly))
+        return;
+    const QByteArray png = file.readAll();
+    if (png.isEmpty() || png == m_imageEditApplied)
+        return;
+    if (!m_document->setPageObjectImagePng(m_imageEditPage, m_imageEditObjectPath, png))
+        return;
+
+    EditHistoryEntry entry;
+    entry.description = tr("Edit image");
+    entry.objectPageIndex = m_imageEditPage;
+    entry.objectPath = m_imageEditObjectPath;
+    entry.beforeImagePng = m_imageEditApplied;
+    entry.afterImagePng = png;
+    m_imageEditApplied = png;
+    recordHistoryEntry(std::move(entry));
+    ++m_documentRevision;
+    if (m_imageEditPage < m_renderedWidths.size())
+        m_renderedWidths[m_imageEditPage] = 0;
+    refreshPageObjects();
+    if (m_imageEditPage < m_pageLabels.size())
+        scheduleRender(m_imageEditPage, m_pageLabels[m_imageEditPage]->width());
+}
+
+void PdfViewerWidget::finishObjectHistory(bool success, int pageIndex,
+                                          int targetHistoryPosition)
+{
+    m_transformInProgress = false;
+    emit operationInProgressChanged(false);
+    if (success) {
+        m_historyPosition = targetHistoryPosition;
+        if (pageIndex >= 0 && pageIndex < m_renderedWidths.size())
+            m_renderedWidths[pageIndex] = 0;
+        updateModifiedState();
+        refreshPageObjects();
+        if (pageIndex >= 0 && pageIndex < m_pageLabels.size())
+            scheduleRender(pageIndex, m_pageLabels[pageIndex]->width());
+    } else {
+        qWarning() << "Failed to restore a page object:" << m_filePath;
+        syncEditControls();
+    }
+    emit historyChanged();
 }
 
 void PdfViewerWidget::syncEditControls()
@@ -2557,6 +2902,44 @@ void PdfViewerWidget::navigateHistory(bool redoOperation)
     const int targetHistoryPosition = redoOperation ? m_historyPosition + 1
                                                     : m_historyPosition - 1;
     const EditHistoryEntry &entry = m_editHistory.at(entryIndex);
+    if (entry.changesPageObject()) {
+        const int pageIndex = entry.objectPageIndex;
+        const QVector<int> objectPath = entry.objectPath;
+        const QVector<float> matrix = redoOperation ? entry.afterMatrix : entry.beforeMatrix;
+        const QByteArray image = redoOperation ? entry.afterImagePng : entry.beforeImagePng;
+        const QString text = redoOperation ? entry.afterText : entry.beforeText;
+        const bool imageEdit = !entry.beforeImagePng.isEmpty() || !entry.afterImagePng.isEmpty();
+        const bool textEdit = !entry.beforeText.isNull() || !entry.afterText.isNull();
+
+        m_transformInProgress = true;
+        emit operationInProgressChanged(true);
+        ++m_documentRevision;
+        m_pagesLoading.clear();
+        syncEditControls();
+
+        const std::shared_ptr<PdfDocument> document = m_document;
+        const QPointer<PdfViewerWidget> weakSelf(this);
+        QThread *thread = QThread::create(
+            [weakSelf, document, pageIndex, objectPath, matrix, image, imageEdit, text, textEdit,
+             targetHistoryPosition]() {
+                const bool restored = textEdit
+                                          ? document->setPageObjectText(pageIndex, objectPath, text)
+                                          : (imageEdit
+                                                 ? document->setPageObjectImagePng(pageIndex, objectPath, image)
+                                                 : document->setPageObjectMatrix(pageIndex, objectPath, matrix));
+                QMetaObject::invokeMethod(
+                    qApp,
+                    [weakSelf, restored, pageIndex, targetHistoryPosition]() {
+                        if (weakSelf)
+                            weakSelf->finishObjectHistory(restored, pageIndex, targetHistoryPosition);
+                    },
+                    Qt::QueuedConnection);
+            });
+        connect(thread, &QThread::finished, thread, &QThread::deleteLater);
+        thread->start();
+        return;
+    }
+
     if (entry.changesPageStructure()) {
         const QVector<quint64> targetPageIds = redoOperation ? entry.afterPageIds
                                                              : entry.beforePageIds;
@@ -2806,9 +3189,29 @@ bool PdfViewerWidget::eventFilter(QObject *watched, QEvent *event)
 
         if (event->type() == QEvent::ContextMenu
             && (m_selectionMode == SelectionMode::Page
-                || m_selectionMode == SelectionMode::Region)) {
+                || m_selectionMode == SelectionMode::Region
+                || m_selectionMode == SelectionMode::Objects)) {
             auto *contextEvent = static_cast<QContextMenuEvent *>(event);
+            if (m_selectionMode == SelectionMode::Objects && pageIndex == m_objectPageIndex) {
+                m_selectedObject = objectAt(label, contextEvent->pos());
+                m_objectDragOffset = {};
+                updateSelectionOverlays();
+            }
             showPageContextMenu(pageIndex, contextEvent->globalPos());
+            return true;
+        }
+
+        if (event->type() == QEvent::MouseButtonDblClick
+            && m_selectionMode == SelectionMode::Objects && pageIndex == m_objectPageIndex) {
+            auto *mouseEvent = static_cast<QMouseEvent *>(event);
+            m_selectedObject = objectAt(label, mouseEvent->position().toPoint());
+            updateSelectionOverlays();
+            if (m_selectedObject >= 0
+                && m_pageObjects[m_selectedObject].kind == PdfPageObjectKind::Image)
+                editSelectedImage();
+            else if (m_selectedObject >= 0
+                     && m_pageObjects[m_selectedObject].kind == PdfPageObjectKind::Text)
+                editSelectedText();
             return true;
         }
 
@@ -2818,6 +3221,16 @@ bool PdfViewerWidget::eventFilter(QObject *watched, QEvent *event)
                 return false;
 
             setCurrentPageFromPointer(pageIndex);
+            if (m_selectionMode == SelectionMode::Objects) {
+                if (pageIndex != m_objectPageIndex)
+                    refreshPageObjects();
+                m_selectedObject = objectAt(label, mouseEvent->position().toPoint());
+                m_objectPressPos = mouseEvent->position().toPoint();
+                m_objectDragOffset = {};
+                m_draggingObject = m_selectedObject >= 0;
+                updateSelectionOverlays();
+                return true;
+            }
             if (m_selectionMode == SelectionMode::Page) {
                 const bool extendRange = mouseEvent->modifiers().testFlag(Qt::ShiftModifier);
                 const bool additive = mouseEvent->modifiers().testFlag(Qt::ControlModifier)
@@ -2867,6 +3280,34 @@ bool PdfViewerWidget::eventFilter(QObject *watched, QEvent *event)
                 startSelectedPageDrag(label);
                 return true;
             }
+        }
+
+        if (event->type() == QEvent::MouseMove && m_selectionMode == SelectionMode::Objects
+            && !m_draggingObject && pageIndex == m_objectPageIndex) {
+            auto *mouseEvent = static_cast<QMouseEvent *>(event);
+            const int hovered = objectAt(label, mouseEvent->position().toPoint());
+            if (hovered != m_hoveredObject) {
+                m_hoveredObject = hovered;
+                label->setCursor(hovered >= 0 ? Qt::SizeAllCursor : Qt::ArrowCursor);
+                updateSelectionOverlays();
+            }
+        }
+
+        if (event->type() == QEvent::MouseMove && m_selectionMode == SelectionMode::Objects
+            && m_draggingObject && pageIndex == m_objectPageIndex) {
+            auto *mouseEvent = static_cast<QMouseEvent *>(event);
+            if (mouseEvent->buttons().testFlag(Qt::LeftButton)) {
+                m_objectDragOffset = mouseEvent->position().toPoint() - m_objectPressPos;
+                updateSelectionOverlays();
+                return true;
+            }
+        }
+
+        if (event->type() == QEvent::MouseButtonRelease && m_selectionMode == SelectionMode::Objects
+            && m_draggingObject && pageIndex == m_objectPageIndex) {
+            m_draggingObject = false;
+            commitObjectMove();
+            return true;
         }
 
         if (event->type() == QEvent::MouseMove && m_selectionMode == SelectionMode::Region
@@ -2970,6 +3411,8 @@ void PdfViewerWidget::goToPage(int pageIndex)
 
     if (pageChanged)
         emit currentPageChanged(m_currentPageIndex);
+    if (m_selectionMode == SelectionMode::Objects)
+        refreshPageObjects();
 }
 
 void PdfViewerWidget::scrollToCurrentPage()
