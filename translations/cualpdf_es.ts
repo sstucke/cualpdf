@@ -821,6 +821,62 @@
         <translation>Editar PDF</translation>
     </message>
     <message>
+        <source>Add Text</source>
+        <translation>Agregar texto</translation>
+    </message>
+    <message>
+        <source>Click the page to place a new text block</source>
+        <translation>Hacé clic en la página para colocar un texto nuevo</translation>
+    </message>
+    <message>
+        <source>Bold</source>
+        <translation>Negrita</translation>
+    </message>
+    <message>
+        <source>Italic</source>
+        <translation>Cursiva</translation>
+    </message>
+    <message>
+        <source>Text color</source>
+        <translation>Color del texto</translation>
+    </message>
+    <message>
+        <source>Align left</source>
+        <translation>Alinear a la izquierda</translation>
+    </message>
+    <message>
+        <source>Align center</source>
+        <translation>Centrar</translation>
+    </message>
+    <message>
+        <source>Align right</source>
+        <translation>Alinear a la derecha</translation>
+    </message>
+    <message>
+        <source>This text is inside a group. Size, color and alignment still apply.</source>
+        <translation>Este texto está dentro de un grupo. El tamaño, el color y la alineación sí se pueden cambiar.</translation>
+    </message>
+    <message>
+        <source>Text size</source>
+        <translation>Tamaño del texto</translation>
+    </message>
+    <message>
+        <source>Text font</source>
+        <translation>Fuente del texto</translation>
+    </message>
+    <message>
+        <source>Align text</source>
+        <translation>Alinear texto</translation>
+    </message>
+    <message>
+        <source>Text</source>
+        <translation>Texto</translation>
+    </message>
+    <message>
+        <source> pt</source>
+        <translation> pt</translation>
+    </message>
+    <message>
         <source>Edit text and images, then organize pages</source>
         <translation>Editar texto e imágenes, y después reorganizar páginas</translation>
     </message>

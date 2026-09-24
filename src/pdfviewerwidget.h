@@ -99,6 +99,17 @@ private:
         QByteArray afterImagePng;
         QString beforeText;
         QString afterText;
+        bool changesTextStyle = false;
+        float beforeFontSize = -1;
+        float afterFontSize = -1;
+        bool changesTextColor = false;
+        QColor beforeTextColor;
+        QColor afterTextColor;
+        bool replacesTypeface = false;
+        QByteArray beforeFontData;
+        QByteArray afterFontData;
+        QString beforeStandardFont;
+        QString afterStandardFont;
 
         bool changesPageStructure() const { return !beforePageIds.isEmpty(); }
         bool changesPageObject() const { return objectPageIndex >= 0; }
@@ -176,6 +187,14 @@ private:
     void editSelectedImage();
     void editSelectedText();
     void commitTextEdit();
+    const PdfPageObjectInfo *selectedTextObject() const;
+    void rerenderEditedPage(int pageIndex);
+    void syncTextFormatBar();
+    void applyTextFontSize(int points);
+    void applyTextColor();
+    void applyTextTypeface();
+    void applyTextAlignment(int alignment);
+    void placeNewText(int pageIndex, const QPoint &labelPosition);
     void reloadEditedImage();
     void finishObjectHistory(bool success, int pageIndex, int targetHistoryPosition);
     void syncEditControls();
@@ -247,6 +266,18 @@ private:
     QAction *m_fitWidthAction = nullptr;
     QAction *m_fitTwoColumnsAction = nullptr;
     QToolButton *m_editPdfButton = nullptr;
+    QWidget *m_textFormatBar = nullptr;
+    QComboBox *m_fontCombo = nullptr;
+    QSpinBox *m_fontSizeSpin = nullptr;
+    QToolButton *m_boldButton = nullptr;
+    QToolButton *m_italicButton = nullptr;
+    QToolButton *m_textColorButton = nullptr;
+    QToolButton *m_alignLeftButton = nullptr;
+    QToolButton *m_alignCenterButton = nullptr;
+    QToolButton *m_alignRightButton = nullptr;
+    QToolButton *m_addTextButton = nullptr;
+    bool m_updatingTextFormat = false;
+    bool m_placingText = false;
     QToolBar *m_editToolbar = nullptr;
     bool m_editingPdf = false;
     QToolButton *m_selectPageButton = nullptr;

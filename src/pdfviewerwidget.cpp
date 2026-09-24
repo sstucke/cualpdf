@@ -11,6 +11,7 @@
 #include <QComboBox>
 #include <QContextMenuEvent>
 #include <QCoreApplication>
+#include <QColorDialog>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
@@ -1148,9 +1149,82 @@ void PdfViewerWidget::buildToolbar()
             [this]() { setSelectionMode(SelectionMode::Region); });
     connect(m_pageSelectionCombo, &QComboBox::activated,
             this, &PdfViewerWidget::applyPageSelectionCommand);
+    m_addTextButton = new QToolButton(editToolbar);
+    m_addTextButton->setText(tr("Add Text"));
+    m_addTextButton->setToolTip(tr("Click the page to place a new text block"));
+    m_addTextButton->setCheckable(true);
+    m_addTextButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    editToolbar->addWidget(m_addTextButton);
+    connect(m_addTextButton, &QToolButton::toggled, this, [this](bool on) {
+        m_placingText = on;
+    });
+
     m_editToolbar->hide();
     setSelectionMode(SelectionMode::Read);
     syncEditControls();
+
+    m_textFormatBar = new QWidget(this);
+    auto *formatLayout = new QHBoxLayout(m_textFormatBar);
+    formatLayout->setContentsMargins(8, 2, 8, 2);
+    formatLayout->setSpacing(4);
+    m_textFormatBar->setStyleSheet(QStringLiteral(
+        "QWidget { background: palette(window); }"
+        "QToolButton { border: none; border-radius: 4px; padding: 2px 7px; min-width: 18px; }"
+        "QToolButton:checked { background: palette(highlight); color: palette(highlighted-text); }"
+        "QToolButton:hover { background: palette(midlight); }"));
+    m_fontCombo = new QComboBox(m_textFormatBar);
+    m_fontCombo->setMinimumWidth(180);
+    m_fontCombo->setMaxVisibleItems(14);
+    m_fontSizeSpin = new QSpinBox(m_textFormatBar);
+    m_fontSizeSpin->setRange(6, 144);
+    m_fontSizeSpin->setSuffix(tr(" pt"));
+    m_fontSizeSpin->setFixedWidth(72);
+    m_boldButton = new QToolButton(m_textFormatBar);
+    m_boldButton->setText(QStringLiteral("B"));
+    m_boldButton->setCheckable(true);
+    m_boldButton->setToolTip(tr("Bold"));
+    QFont boldFont = m_boldButton->font();
+    boldFont.setBold(true);
+    m_boldButton->setFont(boldFont);
+    m_italicButton = new QToolButton(m_textFormatBar);
+    m_italicButton->setText(QStringLiteral("I"));
+    m_italicButton->setCheckable(true);
+    m_italicButton->setToolTip(tr("Italic"));
+    QFont italicFont = m_italicButton->font();
+    italicFont.setItalic(true);
+    m_italicButton->setFont(italicFont);
+    m_textColorButton = new QToolButton(m_textFormatBar);
+    m_textColorButton->setToolTip(tr("Text color"));
+    m_alignLeftButton = new QToolButton(m_textFormatBar);
+    m_alignLeftButton->setText(QStringLiteral("⟸"));
+    m_alignLeftButton->setToolTip(tr("Align left"));
+    m_alignCenterButton = new QToolButton(m_textFormatBar);
+    m_alignCenterButton->setText(QStringLiteral("≡"));
+    m_alignCenterButton->setToolTip(tr("Align center"));
+    m_alignRightButton = new QToolButton(m_textFormatBar);
+    m_alignRightButton->setText(QStringLiteral("⟹"));
+    m_alignRightButton->setToolTip(tr("Align right"));
+    formatLayout->addWidget(m_fontCombo);
+    formatLayout->addWidget(m_fontSizeSpin);
+    formatLayout->addWidget(m_boldButton);
+    formatLayout->addWidget(m_italicButton);
+    formatLayout->addWidget(m_textColorButton);
+    formatLayout->addSpacing(8);
+    formatLayout->addWidget(m_alignLeftButton);
+    formatLayout->addWidget(m_alignCenterButton);
+    formatLayout->addWidget(m_alignRightButton);
+    formatLayout->addStretch();
+    layout()->addWidget(m_textFormatBar);
+    m_textFormatBar->hide();
+
+    connect(m_fontCombo, &QComboBox::activated, this, [this](int) { applyTextTypeface(); });
+    connect(m_fontSizeSpin, &QSpinBox::valueChanged, this, &PdfViewerWidget::applyTextFontSize);
+    connect(m_boldButton, &QToolButton::toggled, this, [this](bool) { applyTextTypeface(); });
+    connect(m_italicButton, &QToolButton::toggled, this, [this](bool) { applyTextTypeface(); });
+    connect(m_textColorButton, &QToolButton::clicked, this, &PdfViewerWidget::applyTextColor);
+    connect(m_alignLeftButton, &QToolButton::clicked, this, [this]() { applyTextAlignment(0); });
+    connect(m_alignCenterButton, &QToolButton::clicked, this, [this]() { applyTextAlignment(1); });
+    connect(m_alignRightButton, &QToolButton::clicked, this, [this]() { applyTextAlignment(2); });
 }
 
 void PdfViewerWidget::startLoading()
@@ -2340,6 +2414,7 @@ void PdfViewerWidget::updateSelectionOverlays()
         }
     }
     syncEditControls();
+    syncTextFormatBar();
 }
 
 void PdfViewerWidget::refreshPageObjects()
@@ -2453,6 +2528,257 @@ QVector<int> decodeObjectPath(const QString &text)
     }
     return path;
 }
+}
+
+namespace {
+QString standardPdfFont(const QString &family, bool bold, bool italic)
+{
+    const QString name = family.toLower();
+    QString face;
+    if (name.contains(QLatin1String("courier")))
+        face = QStringLiteral("Courier");
+    else if (name.contains(QLatin1String("times")))
+        face = QStringLiteral("Times");
+    else if (name.contains(QLatin1String("helvetica")) || name.contains(QLatin1String("arial")))
+        face = QStringLiteral("Helvetica");
+    else
+        return {};
+    if (face == QLatin1String("Times")) {
+        if (bold && italic)
+            return QStringLiteral("Times-BoldItalic");
+        if (bold)
+            return QStringLiteral("Times-Bold");
+        if (italic)
+            return QStringLiteral("Times-Italic");
+        return QStringLiteral("Times-Roman");
+    }
+    if (bold && italic)
+        return face + QStringLiteral("-BoldOblique");
+    if (bold)
+        return face + QStringLiteral("-Bold");
+    if (italic)
+        return face + QStringLiteral("-Oblique");
+    return face;
+}
+
+QByteArray fontFileMatching(const QString &family, bool bold, bool italic)
+{
+    QProcess match;
+    match.start(QStringLiteral("fc-match"),
+                {QStringLiteral("-f"), QStringLiteral("%{file}"),
+                 QStringLiteral("%1:weight=%2:slant=%3")
+                     .arg(family)
+                     .arg(bold ? 700 : 400)
+                     .arg(italic ? QStringLiteral("italic") : QStringLiteral("roman"))});
+    if (!match.waitForFinished(1500) || match.exitCode() != 0)
+        return {};
+    const QString path = QString::fromUtf8(match.readAllStandardOutput()).trimmed();
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly))
+        return {};
+    return file.readAll();
+}
+}
+
+const PdfPageObjectInfo *PdfViewerWidget::selectedTextObject() const
+{
+    if (m_selectionMode != SelectionMode::Objects || m_selectedObject < 0
+        || m_selectedObject >= m_pageObjects.size())
+        return nullptr;
+    const PdfPageObjectInfo &object = m_pageObjects[m_selectedObject];
+    return object.kind == PdfPageObjectKind::Text ? &object : nullptr;
+}
+
+void PdfViewerWidget::rerenderEditedPage(int pageIndex)
+{
+    ++m_documentRevision;
+    if (pageIndex >= 0 && pageIndex < m_renderedWidths.size())
+        m_renderedWidths[pageIndex] = 0;
+    refreshPageObjects();
+    if (pageIndex >= 0 && pageIndex < m_pageLabels.size())
+        scheduleRender(pageIndex, m_pageLabels[pageIndex]->width());
+}
+
+void PdfViewerWidget::syncTextFormatBar()
+{
+    if (!m_textFormatBar)
+        return;
+    const PdfPageObjectInfo *object = selectedTextObject();
+    const bool show = m_editingPdf && object != nullptr;
+    m_textFormatBar->setVisible(show);
+    if (!show)
+        return;
+
+    m_updatingTextFormat = true;
+    if (m_fontCombo->count() == 0)
+        m_fontCombo->addItems(QFontDatabase::families());
+    const QString family = object->fontFamily;
+    int familyIndex = m_fontCombo->findText(family);
+    if (familyIndex < 0 && !family.isEmpty()) {
+        m_fontCombo->insertItem(0, family);
+        familyIndex = 0;
+    }
+    if (familyIndex >= 0)
+        m_fontCombo->setCurrentIndex(familyIndex);
+    if (object->fontSizePoints > 0.f)
+        m_fontSizeSpin->setValue(qRound(object->fontSizePoints));
+    m_boldButton->setChecked(object->fontWeight >= 600);
+    m_italicButton->setChecked(object->italic);
+    QPixmap swatch(16, 16);
+    swatch.fill(object->color);
+    m_textColorButton->setIcon(QIcon(swatch));
+    const bool nested = object->path.size() > 1;
+    m_fontCombo->setEnabled(!nested);
+    m_boldButton->setEnabled(!nested);
+    m_italicButton->setEnabled(!nested);
+    if (nested) {
+        const QString tip = tr("This text is inside a group. Size, color and alignment still apply.");
+        m_fontCombo->setToolTip(tip);
+        m_boldButton->setToolTip(tip);
+        m_italicButton->setToolTip(tip);
+    }
+    m_updatingTextFormat = false;
+}
+
+void PdfViewerWidget::applyTextFontSize(int points)
+{
+    if (m_updatingTextFormat)
+        return;
+    const PdfPageObjectInfo *object = selectedTextObject();
+    if (!object || qRound(object->fontSizePoints) == points)
+        return;
+    const float before = object->fontSizePoints;
+    const QVector<int> path = object->path;
+    const int pageIndex = m_objectPageIndex;
+    if (!m_document->setPageObjectFontSize(pageIndex, path, points))
+        return;
+    EditHistoryEntry entry;
+    entry.description = tr("Text size");
+    entry.objectPageIndex = pageIndex;
+    entry.objectPath = path;
+    entry.changesTextStyle = true;
+    entry.beforeFontSize = before;
+    entry.afterFontSize = points;
+    recordHistoryEntry(std::move(entry));
+    rerenderEditedPage(pageIndex);
+}
+
+void PdfViewerWidget::applyTextColor()
+{
+    const PdfPageObjectInfo *object = selectedTextObject();
+    if (!object)
+        return;
+    const QColor chosen = QColorDialog::getColor(object->color, this, tr("Text color"));
+    if (!chosen.isValid() || chosen == object->color)
+        return;
+    const QColor before = object->color;
+    const QVector<int> path = object->path;
+    const int pageIndex = m_objectPageIndex;
+    if (!m_document->setPageObjectTextColor(pageIndex, path, chosen))
+        return;
+    EditHistoryEntry entry;
+    entry.description = tr("Text color");
+    entry.objectPageIndex = pageIndex;
+    entry.objectPath = path;
+    entry.changesTextColor = true;
+    entry.beforeTextColor = before;
+    entry.afterTextColor = chosen;
+    recordHistoryEntry(std::move(entry));
+    rerenderEditedPage(pageIndex);
+}
+
+void PdfViewerWidget::applyTextTypeface()
+{
+    if (m_updatingTextFormat)
+        return;
+    const PdfPageObjectInfo *object = selectedTextObject();
+    if (!object || object->path.size() != 1)
+        return;
+    const QString family = m_fontCombo->currentText();
+    const bool bold = m_boldButton->isChecked();
+    const bool italic = m_italicButton->isChecked();
+    const QString standard = standardPdfFont(family, bold, italic);
+    const QByteArray fontData = standard.isEmpty() ? fontFileMatching(family, bold, italic) : QByteArray();
+    if (standard.isEmpty() && fontData.isEmpty())
+        return;
+    const QVector<int> path = object->path;
+    const int pageIndex = m_objectPageIndex;
+    const QByteArray beforeData = object->fontData;
+    if (!m_document->replacePageObjectTypeface(pageIndex, path, fontData, standard))
+        return;
+    EditHistoryEntry entry;
+    entry.description = tr("Text font");
+    entry.objectPageIndex = pageIndex;
+    entry.objectPath = path;
+    entry.replacesTypeface = true;
+    entry.beforeFontData = beforeData;
+    entry.afterFontData = fontData;
+    entry.afterStandardFont = standard;
+    recordHistoryEntry(std::move(entry));
+    rerenderEditedPage(pageIndex);
+}
+
+void PdfViewerWidget::applyTextAlignment(int alignment)
+{
+    const PdfPageObjectInfo *object = selectedTextObject();
+    if (!object || m_objectPageIndex < 0)
+        return;
+    QFont font;
+    const QString embedded = familyForPdfFont(object->fontData, object->fontFamily);
+    if (!embedded.isEmpty())
+        font.setFamily(embedded);
+    font.setPixelSize(qMax(1, object->fontPixelSize));
+    font.setBold(object->fontWeight >= 600);
+    font.setItalic(object->italic);
+    const int textWidth = QFontMetrics(font).horizontalAdvance(object->text);
+    int targetLeft = object->bounds.left();
+    if (alignment == 1)
+        targetLeft = object->bounds.center().x() - textWidth / 2;
+    else if (alignment == 2)
+        targetLeft = object->bounds.right() - textWidth;
+    const QPoint delta(targetLeft - object->baseline.x(), 0);
+    if (delta.isNull())
+        return;
+    QVector<float> before;
+    QVector<float> after;
+    QLabel *label = m_pageLabels[m_objectPageIndex];
+    if (!m_document->translatePageObject(m_objectPageIndex, object->path, label->size(), delta,
+                                        &before, &after))
+        return;
+    EditHistoryEntry entry;
+    entry.description = tr("Align text");
+    entry.objectPageIndex = m_objectPageIndex;
+    entry.objectPath = object->path;
+    entry.beforeMatrix = before;
+    entry.afterMatrix = after;
+    recordHistoryEntry(std::move(entry));
+    rerenderEditedPage(m_objectPageIndex);
+}
+
+void PdfViewerWidget::placeNewText(int pageIndex, const QPoint &labelPosition)
+{
+    if (pageIndex < 0 || pageIndex >= m_pageLabels.size())
+        return;
+    QLabel *label = m_pageLabels[pageIndex];
+    const QPointF origin = m_document->pagePointAt(pageIndex, label->size(), labelPosition);
+    const int index = m_document->insertPageText(pageIndex, origin, tr("Text"), 12.f);
+    m_placingText = false;
+    if (m_addTextButton) {
+        const QSignalBlocker blocker(m_addTextButton);
+        m_addTextButton->setChecked(false);
+    }
+    if (index < 0)
+        return;
+    m_currentPageIndex = pageIndex;
+    m_objectPageIndex = pageIndex;
+    rerenderEditedPage(pageIndex);
+    for (int i = 0; i < m_pageObjects.size(); ++i) {
+        if (m_pageObjects[i].path == QVector<int>{index}) {
+            m_selectedObject = i;
+            break;
+        }
+    }
+    updateSelectionOverlays();
 }
 
 void PdfViewerWidget::editSelectedText()
@@ -2958,6 +3284,45 @@ void PdfViewerWidget::navigateHistory(bool redoOperation)
     if (entry.changesPageObject()) {
         const int pageIndex = entry.objectPageIndex;
         const QVector<int> objectPath = entry.objectPath;
+        if (entry.changesTextStyle || entry.changesTextColor || entry.replacesTypeface) {
+            const float fontSize = redoOperation ? entry.afterFontSize : entry.beforeFontSize;
+            const QColor color = redoOperation ? entry.afterTextColor : entry.beforeTextColor;
+            const QByteArray fontData = redoOperation ? entry.afterFontData : entry.beforeFontData;
+            const QString standardFont = redoOperation ? entry.afterStandardFont : entry.beforeStandardFont;
+            const bool style = entry.changesTextStyle;
+            const bool recolor = entry.changesTextColor;
+            const bool typeface = entry.replacesTypeface;
+            m_transformInProgress = true;
+            emit operationInProgressChanged(true);
+            ++m_documentRevision;
+            m_pagesLoading.clear();
+            syncEditControls();
+            const std::shared_ptr<PdfDocument> document = m_document;
+            const QPointer<PdfViewerWidget> weakSelf(this);
+            QThread *thread = QThread::create(
+                [weakSelf, document, pageIndex, objectPath, fontSize, color, fontData, standardFont,
+                 style, recolor, typeface, targetHistoryPosition]() {
+                    bool restored = true;
+                    if (style)
+                        restored = document->setPageObjectFontSize(pageIndex, objectPath, fontSize);
+                    if (recolor)
+                        restored = document->setPageObjectTextColor(pageIndex, objectPath, color) && restored;
+                    if (typeface)
+                        restored = document->replacePageObjectTypeface(pageIndex, objectPath, fontData,
+                                                                      standardFont)
+                                   && restored;
+                    QMetaObject::invokeMethod(
+                        qApp,
+                        [weakSelf, restored, pageIndex, targetHistoryPosition]() {
+                            if (weakSelf)
+                                weakSelf->finishObjectHistory(restored, pageIndex, targetHistoryPosition);
+                        },
+                        Qt::QueuedConnection);
+                });
+            connect(thread, &QThread::finished, thread, &QThread::deleteLater);
+            thread->start();
+            return;
+        }
         const QVector<float> matrix = redoOperation ? entry.afterMatrix : entry.beforeMatrix;
         const QByteArray image = redoOperation ? entry.afterImagePng : entry.beforeImagePng;
         const QString text = redoOperation ? entry.afterText : entry.beforeText;
@@ -3274,6 +3639,10 @@ bool PdfViewerWidget::eventFilter(QObject *watched, QEvent *event)
                 return false;
 
             setCurrentPageFromPointer(pageIndex);
+            if (m_placingText && m_editingPdf) {
+                placeNewText(pageIndex, mouseEvent->position().toPoint());
+                return true;
+            }
             if (m_selectionMode == SelectionMode::Read)
                 return true;
             if (m_selectionMode == SelectionMode::Objects) {
