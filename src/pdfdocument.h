@@ -3,10 +3,29 @@
 #include <QByteArray>
 #include <QImage>
 #include <QMarginsF>
+#include <QRect>
+#include <QSize>
 #include <QSizeF>
 #include <QString>
 #include <QStringList>
 #include <QVector>
+
+enum class PdfPageObjectKind {
+    Unknown,
+    Text,
+    Path,
+    Image,
+    Shading,
+    Form,
+};
+
+struct PdfPageObjectInfo {
+    // Indexes from the page down through any nested form (a group of objects).
+    QVector<int> path;
+    PdfPageObjectKind kind = PdfPageObjectKind::Unknown;
+    QRect bounds;
+    QString text;
+};
 
 struct PdfPageState {
     int pageIndex = -1;
@@ -43,6 +62,16 @@ public:
 
     // Renders a page at the given width in pixels, preserving aspect ratio.
     QImage renderPage(int pageIndex, int targetWidthPx) const;
+
+    // Page objects in the same pixel space renderPage() uses for `deviceSize`.
+    QVector<PdfPageObjectInfo> pageObjects(int pageIndex, const QSize &deviceSize) const;
+    bool translatePageObject(int pageIndex, const QVector<int> &objectPath, const QSize &deviceSize,
+                             const QPoint &deltaPixels, QVector<float> *beforeMatrix,
+                             QVector<float> *afterMatrix);
+    bool setPageObjectMatrix(int pageIndex, const QVector<int> &objectPath, const QVector<float> &matrix);
+    QByteArray pageObjectImagePng(int pageIndex, const QVector<int> &objectPath) const;
+    bool setPageObjectImagePng(int pageIndex, const QVector<int> &objectPath, const QByteArray &png);
+    bool setPageObjectText(int pageIndex, const QVector<int> &objectPath, const QString &text);
 
     // Applies page-dictionary transformations to the loaded document. These
     // changes live in memory until a save workflow persists the document.

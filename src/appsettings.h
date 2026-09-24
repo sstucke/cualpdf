@@ -42,6 +42,10 @@ public:
     bool preserveExplorerWhenClosingTabs() const;
     void setPreserveExplorerWhenClosingTabs(bool enabled);
 
+    // Empty means the operating system's default application for the file.
+    QString imageEditorPath() const;
+    void setImageEditorPath(const QString &path);
+
 private:
     QSettings m_settings;
 };

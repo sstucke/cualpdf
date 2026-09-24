@@ -9,6 +9,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
+#include <QFileDialog>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSpinBox>
@@ -28,11 +29,13 @@ PreferencesDialog::PreferencesDialog(AppSettings &settings, QWidget *parent)
     , m_savingGroup(new QGroupBox(tr("Saving"), this))
     , m_tipsGroup(new QGroupBox(tr("Tips"), this))
     , m_windowsGroup(new QGroupBox(tr("Windows"), this))
+    , m_editingGroup(new QGroupBox(tr("Editing"), this))
     , m_backupRow(new QWidget(this))
     , m_retentionRow(new QWidget(this))
     , m_showTipsRow(new QWidget(this))
     , m_autoCloseTipsRow(new QWidget(this))
     , m_preserveExplorerRow(new QWidget(this))
+    , m_imageEditorRow(new QWidget(this))
     , m_backupCheckBox(new QCheckBox(
           tr("Create a timestamped backup before overwriting a PDF"), m_backupRow))
     , m_retentionSpinBox(new QSpinBox(m_retentionRow))
@@ -42,6 +45,9 @@ PreferencesDialog::PreferencesDialog(AppSettings &settings, QWidget *parent)
     , m_preserveExplorerCheckBox(new QCheckBox(
           tr("Preserve the file explorer when closing all tabs"),
           m_preserveExplorerRow))
+    , m_imageEditorEdit(new QLineEdit(m_imageEditorRow))
+    , m_imageEditorBrowseButton(new QPushButton(tr("Browse…"), m_imageEditorRow))
+    , m_imageEditorClearButton(new QPushButton(tr("Use system default"), m_imageEditorRow))
     , m_noResultsLabel(new QLabel(tr("No settings match your search."), this))
 {
     setWindowTitle(tr("Preferences"));
@@ -110,7 +116,26 @@ PreferencesDialog::PreferencesDialog(AppSettings &settings, QWidget *parent)
     preserveExplorerLayout->addWidget(m_preserveExplorerCheckBox);
     windowsLayout->addWidget(m_preserveExplorerRow);
 
+    auto *editingLayout = new QVBoxLayout(m_editingGroup);
+    auto *imageEditorLayout = new QVBoxLayout(m_imageEditorRow);
+    imageEditorLayout->setContentsMargins(0, 0, 0, 0);
+    auto *imageEditorDescription = new QLabel(
+        tr("Images on a page open in this program. Leave it empty to use the application your system uses for PNG files."),
+        m_imageEditorRow);
+    imageEditorDescription->setWordWrap(true);
+    imageEditorDescription->setStyleSheet(QStringLiteral("color: palette(mid);"));
+    imageEditorLayout->addWidget(imageEditorDescription);
+    auto *imageEditorPathLayout = new QHBoxLayout();
+    m_imageEditorEdit->setReadOnly(true);
+    m_imageEditorEdit->setPlaceholderText(tr("System default"));
+    imageEditorPathLayout->addWidget(m_imageEditorEdit);
+    imageEditorPathLayout->addWidget(m_imageEditorBrowseButton);
+    imageEditorPathLayout->addWidget(m_imageEditorClearButton);
+    imageEditorLayout->addLayout(imageEditorPathLayout);
+    editingLayout->addWidget(m_imageEditorRow);
+
     settingsLayout->addWidget(m_savingGroup);
+    settingsLayout->addWidget(m_editingGroup);
     settingsLayout->addWidget(m_tipsGroup);
     settingsLayout->addWidget(m_windowsGroup);
     settingsLayout->addWidget(m_noResultsLabel);
@@ -134,6 +159,16 @@ PreferencesDialog::PreferencesDialog(AppSettings &settings, QWidget *parent)
     m_autoCloseTipsCheckBox->setChecked(m_settings.autoCloseTips());
     m_preserveExplorerCheckBox->setChecked(
         m_settings.preserveExplorerWhenClosingTabs());
+    m_imageEditorEdit->setText(m_settings.imageEditorPath());
+    connect(m_imageEditorBrowseButton, &QPushButton::clicked, this, [this]() {
+        const QString path = QFileDialog::getOpenFileName(
+            this, tr("Choose an image editor"), m_imageEditorEdit->text());
+        if (!path.isEmpty())
+            m_imageEditorEdit->setText(path);
+    });
+    connect(m_imageEditorClearButton, &QPushButton::clicked, this, [this]() {
+        m_imageEditorEdit->clear();
+    });
     connect(m_backupCheckBox, &QCheckBox::toggled, m_retentionRow, &QWidget::setEnabled);
     connect(m_searchEdit, &QLineEdit::textChanged,
             this, &PreferencesDialog::filterSettings);
@@ -144,6 +179,8 @@ PreferencesDialog::PreferencesDialog(AppSettings &settings, QWidget *parent)
     m_autoCloseTipsSearchText = tr("tips automatic close timeout countdown");
     m_preserveExplorerSearchText =
         tr("windows tabs close all preserve keep file explorer");
+    m_imageEditorSearchText =
+        tr("image editor external gimp paint photoshop png");
     m_noResultsLabel->hide();
 }
 
@@ -153,6 +190,7 @@ void PreferencesDialog::filterSettings(const QString &query)
     const bool savingGroupMatch = containsText(m_savingGroup->title(), normalized);
     const bool tipsGroupMatch = containsText(m_tipsGroup->title(), normalized);
     const bool windowsGroupMatch = containsText(m_windowsGroup->title(), normalized);
+    const bool editingGroupMatch = containsText(m_editingGroup->title(), normalized);
     const bool backupVisible = savingGroupMatch
                                || containsText(m_backupCheckBox->text() + QLatin1Char(' ')
                                                    + m_backupSearchText,
@@ -180,13 +218,18 @@ void PreferencesDialog::filterSettings(const QString &query)
     m_retentionRow->setVisible(retentionVisible);
     m_showTipsRow->setVisible(showTipsVisible);
     m_autoCloseTipsRow->setVisible(autoCloseTipsVisible);
+    const bool imageEditorVisible = editingGroupMatch
+                                    || containsText(m_imageEditorSearchText, normalized);
     m_preserveExplorerRow->setVisible(preserveExplorerVisible);
+    m_imageEditorRow->setVisible(imageEditorVisible);
     m_savingGroup->setVisible(backupVisible || retentionVisible);
     m_tipsGroup->setVisible(showTipsVisible || autoCloseTipsVisible);
     m_windowsGroup->setVisible(preserveExplorerVisible);
+    m_editingGroup->setVisible(imageEditorVisible);
     m_noResultsLabel->setVisible(!m_savingGroup->isVisible()
                                  && !m_tipsGroup->isVisible()
-                                 && !m_windowsGroup->isVisible());
+                                 && !m_windowsGroup->isVisible()
+                                 && !m_editingGroup->isVisible());
 }
 
 void PreferencesDialog::saveAndAccept()
@@ -197,5 +240,6 @@ void PreferencesDialog::saveAndAccept()
     m_settings.setAutoCloseTips(m_autoCloseTipsCheckBox->isChecked());
     m_settings.setPreserveExplorerWhenClosingTabs(
         m_preserveExplorerCheckBox->isChecked());
+    m_settings.setImageEditorPath(m_imageEditorEdit->text().trimmed());
     accept();
 }

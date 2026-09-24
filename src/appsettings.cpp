@@ -9,6 +9,7 @@ constexpr auto kBackupVersionLimitKey = "backupVersionLimit";
 constexpr auto kShowTipsAtStartupKey = "showTipsAtStartup";
 constexpr auto kAutoCloseTipsKey = "autoCloseTips";
 constexpr auto kPreserveExplorerWhenClosingTabsKey = "preserveExplorerWhenClosingTabs";
+constexpr auto kImageEditorPathKey = "imageEditorPath";
 constexpr auto kDefaultContentViewMode = static_cast<int>(AppSettings::ContentViewMode::Thumbnails);
 constexpr int kDefaultBackupVersionLimit = 5;
 }
@@ -98,4 +99,14 @@ bool AppSettings::preserveExplorerWhenClosingTabs() const
 void AppSettings::setPreserveExplorerWhenClosingTabs(bool enabled)
 {
     m_settings.setValue(kPreserveExplorerWhenClosingTabsKey, enabled);
+}
+
+QString AppSettings::imageEditorPath() const
+{
+    return m_settings.value(kImageEditorPathKey).toString();
+}
+
+void AppSettings::setImageEditorPath(const QString &path)
+{
+    m_settings.setValue(kImageEditorPathKey, path);
 }
