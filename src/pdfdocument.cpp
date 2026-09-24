@@ -486,6 +486,7 @@ void describeText(FPDF_PAGE page, const QSize &deviceSize, FPDF_PAGEOBJECT objec
     const double pageWidth = FPDF_GetPageWidthF(page);
     const double pixelsPerPoint = pageWidth > 0.0 ? deviceSize.width() / pageWidth : 1.0;
     info->fontPixelSize = qMax(1, qRound(fontSize * userScale * pixelsPerPoint));
+    info->fontSizePoints = fontSize * userScale;
 
     const PlacedMatrix placed = multiply(toPage, {local.a, local.b, local.c, local.d, local.e, local.f});
     info->baseline = devicePoint(page, deviceSize, placed.e, placed.f);
@@ -744,6 +745,146 @@ bool PdfDocument::setPageObjectText(int pageIndex, const QVector<int> &objectPat
                          && FPDFPage_GenerateContent(page);
     FPDF_ClosePage(page);
     return applied;
+}
+
+bool PdfDocument::setPageObjectFontSize(int pageIndex, const QVector<int> &objectPath,
+                                       float sizePoints)
+{
+    if (!m_document || sizePoints < 0.f)
+        return false;
+    const QMutexLocker locker(&pdfiumMutex());
+    const FPDF_PAGE page = FPDF_LoadPage(static_cast<FPDF_DOCUMENT>(m_document), pageIndex);
+    if (!page)
+        return false;
+    const FPDF_PAGEOBJECT object = pageObjectAt(page, objectPath);
+    const bool applied = object && FPDFTextObj_SetFontSize(object, sizePoints)
+                         && FPDFPage_GenerateContent(page);
+    FPDF_ClosePage(page);
+    return applied;
+}
+
+bool PdfDocument::setPageObjectTextColor(int pageIndex, const QVector<int> &objectPath,
+                                         const QColor &color)
+{
+    if (!m_document || !color.isValid())
+        return false;
+    const QMutexLocker locker(&pdfiumMutex());
+    const FPDF_PAGE page = FPDF_LoadPage(static_cast<FPDF_DOCUMENT>(m_document), pageIndex);
+    if (!page)
+        return false;
+    const FPDF_PAGEOBJECT object = pageObjectAt(page, objectPath);
+    const bool applied = object
+                         && FPDFPageObj_SetFillColor(object,
+                                                     static_cast<unsigned int>(color.red()),
+                                                     static_cast<unsigned int>(color.green()),
+                                                     static_cast<unsigned int>(color.blue()),
+                                                     static_cast<unsigned int>(color.alpha()))
+                         && FPDFPage_GenerateContent(page);
+    FPDF_ClosePage(page);
+    return applied;
+}
+
+bool PdfDocument::replacePageObjectTypeface(int pageIndex, const QVector<int> &objectPath,
+                                            const QByteArray &fontData,
+                                            const QString &standardFontName)
+{
+    if (!m_document || objectPath.size() != 1)
+        return false;
+    const QMutexLocker locker(&pdfiumMutex());
+    const auto document = static_cast<FPDF_DOCUMENT>(m_document);
+    const FPDF_PAGE page = FPDF_LoadPage(document, pageIndex);
+    if (!page)
+        return false;
+    const FPDF_PAGEOBJECT object = pageObjectAt(page, objectPath);
+    if (!object || FPDFPageObj_GetType(object) != FPDF_PAGEOBJ_TEXT) {
+        FPDF_ClosePage(page);
+        return false;
+    }
+    float size = 12.f;
+    FPDFTextObj_GetFontSize(object, &size);
+    const QVector<float> matrix = matrixOf(object);
+    const FPDF_TEXTPAGE textPage = FPDFText_LoadPage(page);
+    const QString text = textOf(object, textPage);
+    FPDFText_ClosePage(textPage);
+    unsigned int red = 0, green = 0, blue = 0, alpha = 255;
+    FPDFPageObj_GetFillColor(object, &red, &green, &blue, &alpha);
+
+    FPDF_FONT font = nullptr;
+    if (!standardFontName.isEmpty())
+        font = FPDFText_LoadStandardFont(document, standardFontName.toLatin1().constData());
+    else if (!fontData.isEmpty())
+        font = FPDFText_LoadFont(document, reinterpret_cast<const uint8_t *>(fontData.constData()),
+                                 static_cast<uint32_t>(fontData.size()), FPDF_FONT_TRUETYPE,
+                                 /*cid=*/false);
+    if (!font) {
+        FPDF_ClosePage(page);
+        return false;
+    }
+    const FPDF_PAGEOBJECT created = FPDFPageObj_CreateTextObj(document, font, size);
+    FPDFFont_Close(font);
+    bool applied = false;
+    if (created && !text.isEmpty()
+        && FPDFText_SetText(created, reinterpret_cast<FPDF_WIDESTRING>(text.utf16()))
+        && matrix.size() == 6) {
+        FS_MATRIX value = {matrix[0], matrix[1], matrix[2], matrix[3], matrix[4], matrix[5]};
+        FPDFPageObj_SetMatrix(created, &value);
+        FPDFPageObj_SetFillColor(created, red, green, blue, alpha);
+        if (FPDFPage_RemoveObject(page, object)) {
+            FPDFPageObj_Destroy(object);
+            applied = FPDFPage_InsertObjectAtIndex(page, created, static_cast<size_t>(objectPath.first()))
+                      && FPDFPage_GenerateContent(page);
+        }
+    }
+    if (!applied && created)
+        FPDFPageObj_Destroy(created);
+    FPDF_ClosePage(page);
+    return applied;
+}
+
+int PdfDocument::insertPageText(int pageIndex, const QPointF &originPoints, const QString &text,
+                                float sizePoints)
+{
+    if (!m_document || text.isEmpty() || sizePoints <= 0.f)
+        return -1;
+    const QMutexLocker locker(&pdfiumMutex());
+    const auto document = static_cast<FPDF_DOCUMENT>(m_document);
+    const FPDF_PAGE page = FPDF_LoadPage(document, pageIndex);
+    if (!page)
+        return -1;
+    const FPDF_FONT font = FPDFText_LoadStandardFont(document, "Helvetica");
+    const FPDF_PAGEOBJECT created = font ? FPDFPageObj_CreateTextObj(document, font, sizePoints)
+                                         : nullptr;
+    if (font)
+        FPDFFont_Close(font);
+    bool applied = false;
+    if (created && FPDFText_SetText(created, reinterpret_cast<FPDF_WIDESTRING>(text.utf16()))) {
+        FS_MATRIX value = {1, 0, 0, 1, static_cast<float>(originPoints.x()),
+                           static_cast<float>(originPoints.y())};
+        FPDFPageObj_SetMatrix(created, &value);
+        FPDFPageObj_SetFillColor(created, 0, 0, 0, 255);
+        applied = FPDFPage_InsertObject(page, created) && FPDFPage_GenerateContent(page);
+    }
+    if (!applied && created)
+        FPDFPageObj_Destroy(created);
+    const int index = applied ? FPDFPage_CountObjects(page) - 1 : -1;
+    FPDF_ClosePage(page);
+    return index;
+}
+
+QPointF PdfDocument::pagePointAt(int pageIndex, const QSize &deviceSize, const QPoint &pixel) const
+{
+    if (!m_document || deviceSize.isEmpty())
+        return {};
+    const QMutexLocker locker(&pdfiumMutex());
+    const FPDF_PAGE page = FPDF_LoadPage(static_cast<FPDF_DOCUMENT>(m_document), pageIndex);
+    if (!page)
+        return {};
+    double x = 0;
+    double y = 0;
+    const bool mapped = FPDF_DeviceToPage(page, 0, 0, deviceSize.width(), deviceSize.height(),
+                                          /*rotate=*/0, pixel.x(), pixel.y(), &x, &y);
+    FPDF_ClosePage(page);
+    return mapped ? QPointF(x, y) : QPointF();
 }
 
 bool PdfDocument::rotatePages(const QVector<int> &pageIndexes, bool clockwise)

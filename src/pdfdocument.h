@@ -31,6 +31,7 @@ struct PdfPageObjectInfo {
     int fontWeight = 400;
     bool italic = false;
     int fontPixelSize = 0;
+    float fontSizePoints = 0;
     QPoint baseline;
     QColor color = Qt::black;
 };
@@ -80,6 +81,15 @@ public:
     QByteArray pageObjectImagePng(int pageIndex, const QVector<int> &objectPath) const;
     bool setPageObjectImagePng(int pageIndex, const QVector<int> &objectPath, const QByteArray &png);
     bool setPageObjectText(int pageIndex, const QVector<int> &objectPath, const QString &text);
+    bool setPageObjectFontSize(int pageIndex, const QVector<int> &objectPath, float sizePoints);
+    bool setPageObjectTextColor(int pageIndex, const QVector<int> &objectPath, const QColor &color);
+    // Replaces the typeface of a text object that sits directly on the page.
+    // Nested text keeps its face; size, color and alignment still apply there.
+    bool replacePageObjectTypeface(int pageIndex, const QVector<int> &objectPath,
+                                   const QByteArray &fontData, const QString &standardFontName);
+    int insertPageText(int pageIndex, const QPointF &originPoints, const QString &text,
+                       float sizePoints);
+    QPointF pagePointAt(int pageIndex, const QSize &deviceSize, const QPoint &pixel) const;
 
     // Applies page-dictionary transformations to the loaded document. These
     // changes live in memory until a save workflow persists the document.
