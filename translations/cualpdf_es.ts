@@ -817,6 +817,14 @@
         <translation>Editar objetos</translation>
     </message>
     <message>
+        <source>Edit PDF</source>
+        <translation>Editar PDF</translation>
+    </message>
+    <message>
+        <source>Edit text and images, then organize pages</source>
+        <translation>Editar texto e imágenes, y después reorganizar páginas</translation>
+    </message>
+    <message>
         <source>Select and move text, drawings, and images</source>
         <translation>Seleccionar y mover texto, dibujos e imágenes</translation>
     </message>

@@ -25,6 +25,7 @@ class QLabel;
 class QLineEdit;
 class QScrollArea;
 class QSpinBox;
+class QToolBar;
 class QToolButton;
 class PdfInsertionPlaceholder;
 
@@ -124,6 +125,7 @@ private:
     };
 
     enum class SelectionMode {
+        Read,
         Page,
         Region,
         Objects,
@@ -172,6 +174,7 @@ private:
     void syncViewControl();
     void syncFitControl();
     void setSelectionMode(SelectionMode mode);
+    void setEditingPdf(bool enabled);
     void applyPageSelectionCommand(int commandIndex);
     void updateSelectionOverlays();
     void refreshPageObjects();
@@ -250,9 +253,11 @@ private:
     QAction *m_fitPageAction = nullptr;
     QAction *m_fitWidthAction = nullptr;
     QAction *m_fitTwoColumnsAction = nullptr;
+    QToolButton *m_editPdfButton = nullptr;
+    QToolBar *m_editToolbar = nullptr;
+    bool m_editingPdf = false;
     QToolButton *m_selectPageButton = nullptr;
     QToolButton *m_selectRegionButton = nullptr;
-    QToolButton *m_editObjectsButton = nullptr;
     QComboBox *m_pageSelectionCombo = nullptr;
     QToolButton *m_cropButton = nullptr;
     QToolButton *m_rotateCounterclockwiseButton = nullptr;
@@ -263,7 +268,7 @@ private:
     QAction *m_extractPagesAction = nullptr;
     PageLayout m_pageLayout = PageLayout::Continuous;
     ZoomMode m_zoomMode = ZoomMode::FixedWidth;
-    SelectionMode m_selectionMode = SelectionMode::Page;
+    SelectionMode m_selectionMode = SelectionMode::Read;
     QSet<int> m_selectedPages;
     int m_pageSelectionAnchor = -1;
     int m_regionPageIndex = -1;

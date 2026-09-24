@@ -890,49 +890,6 @@ void PdfViewerWidget::buildToolbar()
 
     const QColor iconColor = palette().color(QPalette::Text);
 
-    auto *selectionGroup = new QButtonGroup(toolbar);
-    selectionGroup->setExclusive(true);
-
-    m_selectPageButton = new QToolButton(toolbar);
-    m_selectPageButton->setCheckable(true);
-    m_selectPageButton->setChecked(true);
-    m_selectPageButton->setIcon(selectionModeIcon(true, iconColor));
-    m_selectPageButton->setText(tr("Select Page"));
-    m_selectPageButton->setToolTip(tr("Select pages"));
-    m_selectPageButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    selectionGroup->addButton(m_selectPageButton);
-    toolbar->addWidget(m_selectPageButton);
-
-    m_selectRegionButton = new QToolButton(toolbar);
-    m_selectRegionButton->setCheckable(true);
-    m_selectRegionButton->setIcon(selectionModeIcon(false, iconColor));
-    m_selectRegionButton->setText(tr("Select Region"));
-    m_selectRegionButton->setToolTip(tr("Select a rectangular region"));
-    m_selectRegionButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    selectionGroup->addButton(m_selectRegionButton);
-    toolbar->addWidget(m_selectRegionButton);
-
-    m_editObjectsButton = new QToolButton(toolbar);
-    m_editObjectsButton->setCheckable(true);
-    m_editObjectsButton->setText(tr("Edit Objects"));
-    m_editObjectsButton->setToolTip(tr("Select and move text, drawings, and images"));
-    m_editObjectsButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    selectionGroup->addButton(m_editObjectsButton);
-    toolbar->addWidget(m_editObjectsButton);
-
-    m_pageSelectionCombo = new QComboBox(toolbar);
-    m_pageSelectionCombo->setFixedWidth(110);
-    m_pageSelectionCombo->setPlaceholderText(tr("Select"));
-    m_pageSelectionCombo->addItem(tr("All"));
-    m_pageSelectionCombo->addItem(tr("None"));
-    m_pageSelectionCombo->addItem(tr("Even"));
-    m_pageSelectionCombo->addItem(tr("Odd"));
-    m_pageSelectionCombo->setCurrentIndex(-1);
-    m_pageSelectionCombo->setEnabled(false);
-    toolbar->addWidget(m_pageSelectionCombo);
-
-    toolbar->addSeparator();
-
     m_previousPageButton = new QToolButton(toolbar);
     m_previousPageButton->setIcon(style()->standardIcon(QStyle::SP_ArrowLeft));
     m_previousPageButton->setToolTip(tr("Previous Page"));
@@ -1015,18 +972,20 @@ void PdfViewerWidget::buildToolbar()
     m_zoomFitButton->setMenu(fitMenu);
     toolbar->addWidget(m_zoomFitButton);
 
+    toolbar->addSeparator();
+
+    m_editPdfButton = new QToolButton(toolbar);
+    m_editPdfButton->setCheckable(true);
+    m_editPdfButton->setText(tr("Edit PDF"));
+    m_editPdfButton->setToolTip(tr("Edit text and images, then organize pages"));
+    m_editPdfButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    toolbar->addWidget(m_editPdfButton);
+
     m_previousPageButton->setEnabled(false);
     m_pageSpinBox->setEnabled(false);
     m_nextPageButton->setEnabled(false);
 
-    connect(m_selectPageButton, &QToolButton::clicked, this,
-            [this]() { setSelectionMode(SelectionMode::Page); });
-    connect(m_selectRegionButton, &QToolButton::clicked, this,
-            [this]() { setSelectionMode(SelectionMode::Region); });
-    connect(m_editObjectsButton, &QToolButton::clicked, this,
-            [this]() { setSelectionMode(SelectionMode::Objects); });
-    connect(m_pageSelectionCombo, &QComboBox::activated,
-            this, &PdfViewerWidget::applyPageSelectionCommand);
+    connect(m_editPdfButton, &QToolButton::toggled, this, &PdfViewerWidget::setEditingPdf);
 
     connect(m_previousPageButton, &QToolButton::clicked, this,
             [this]() { navigateByPageGroup(-1); });
@@ -1059,17 +1018,52 @@ void PdfViewerWidget::buildToolbar()
     });
 
     m_zoomMode = ZoomMode::FitPage;
-    setSelectionMode(SelectionMode::Page);
+    setSelectionMode(SelectionMode::Read);
     syncViewControl();
     syncFitControl();
     syncZoomControl();
 
-    auto *editToolbar = new QToolBar(this);
-    editToolbar->setObjectName(QStringLiteral("editToolBar"));
-    editToolbar->setMovable(false);
-    editToolbar->setFloatable(false);
-    editToolbar->setIconSize(QSize(28, 24));
-    layout()->addWidget(editToolbar);
+    m_editToolbar = new QToolBar(this);
+    m_editToolbar->setObjectName(QStringLiteral("editToolBar"));
+    m_editToolbar->setMovable(false);
+    m_editToolbar->setFloatable(false);
+    m_editToolbar->setIconSize(QSize(28, 24));
+    layout()->addWidget(m_editToolbar);
+    auto *editToolbar = m_editToolbar;
+
+    auto *selectionGroup = new QButtonGroup(editToolbar);
+    selectionGroup->setExclusive(true);
+
+    m_selectPageButton = new QToolButton(editToolbar);
+    m_selectPageButton->setCheckable(true);
+    m_selectPageButton->setIcon(selectionModeIcon(true, iconColor));
+    m_selectPageButton->setText(tr("Select Page"));
+    m_selectPageButton->setToolTip(tr("Select pages"));
+    m_selectPageButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    selectionGroup->addButton(m_selectPageButton);
+    editToolbar->addWidget(m_selectPageButton);
+
+    m_selectRegionButton = new QToolButton(editToolbar);
+    m_selectRegionButton->setCheckable(true);
+    m_selectRegionButton->setIcon(selectionModeIcon(false, iconColor));
+    m_selectRegionButton->setText(tr("Select Region"));
+    m_selectRegionButton->setToolTip(tr("Select a rectangular region"));
+    m_selectRegionButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    selectionGroup->addButton(m_selectRegionButton);
+    editToolbar->addWidget(m_selectRegionButton);
+
+    m_pageSelectionCombo = new QComboBox(editToolbar);
+    m_pageSelectionCombo->setFixedWidth(110);
+    m_pageSelectionCombo->setPlaceholderText(tr("Select"));
+    m_pageSelectionCombo->addItem(tr("All"));
+    m_pageSelectionCombo->addItem(tr("None"));
+    m_pageSelectionCombo->addItem(tr("Even"));
+    m_pageSelectionCombo->addItem(tr("Odd"));
+    m_pageSelectionCombo->setCurrentIndex(-1);
+    m_pageSelectionCombo->setEnabled(false);
+    editToolbar->addWidget(m_pageSelectionCombo);
+
+    editToolbar->addSeparator();
 
     m_organizePagesButton = new QToolButton(editToolbar);
     m_organizePagesButton->setObjectName(QStringLiteral("organizePagesButton"));
@@ -1144,6 +1138,14 @@ void PdfViewerWidget::buildToolbar()
             [this]() { rotateSelectedPages(false); });
     connect(m_rotateClockwiseButton, &QToolButton::clicked, this,
             [this]() { rotateSelectedPages(true); });
+    connect(m_selectPageButton, &QToolButton::clicked, this,
+            [this]() { setSelectionMode(SelectionMode::Page); });
+    connect(m_selectRegionButton, &QToolButton::clicked, this,
+            [this]() { setSelectionMode(SelectionMode::Region); });
+    connect(m_pageSelectionCombo, &QComboBox::activated,
+            this, &PdfViewerWidget::applyPageSelectionCommand);
+    m_editToolbar->hide();
+    setSelectionMode(SelectionMode::Read);
     syncEditControls();
 }
 
@@ -1763,23 +1765,25 @@ void PdfViewerWidget::setSelectionMode(SelectionMode mode)
     }
     m_selectionMode = mode;
 
+    QButtonGroup *selectionGroup = m_selectPageButton ? m_selectPageButton->group() : nullptr;
+    if (selectionGroup)
+        selectionGroup->setExclusive(false);
     if (m_selectPageButton)
         m_selectPageButton->setChecked(mode == SelectionMode::Page);
     if (m_selectRegionButton)
         m_selectRegionButton->setChecked(mode == SelectionMode::Region);
-    if (m_editObjectsButton)
-        m_editObjectsButton->setChecked(mode == SelectionMode::Objects);
+    if (selectionGroup)
+        selectionGroup->setExclusive(true);
     if (m_pageSelectionCombo)
         m_pageSelectionCombo->setVisible(mode == SelectionMode::Page);
 
-    for (QLabel *label : m_pageLabels) {
-        label->setCursor(mode == SelectionMode::Objects
-                             ? Qt::ArrowCursor
-                             : (mode == SelectionMode::Region
-                                    ? Qt::CrossCursor
-                                    : (m_organizePagesEnabled ? Qt::OpenHandCursor
-                                                             : Qt::PointingHandCursor)));
-    }
+    const Qt::CursorShape cursor = mode == SelectionMode::Region
+                                       ? Qt::CrossCursor
+                                       : (mode == SelectionMode::Page && m_organizePagesEnabled
+                                              ? Qt::OpenHandCursor
+                                              : Qt::ArrowCursor);
+    for (QLabel *label : m_pageLabels)
+        label->setCursor(cursor);
     if (mode != SelectionMode::Objects) {
         m_selectedObject = -1;
         m_draggingObject = false;
@@ -1787,6 +1791,22 @@ void PdfViewerWidget::setSelectionMode(SelectionMode mode)
     }
     updateSelectionOverlays();
     refreshPageObjects();
+}
+
+void PdfViewerWidget::setEditingPdf(bool enabled)
+{
+    m_editingPdf = enabled;
+    if (m_editToolbar)
+        m_editToolbar->setVisible(enabled);
+    if (!enabled && m_organizePagesEnabled) {
+        m_organizePagesEnabled = false;
+        if (m_organizePagesButton) {
+            const QSignalBlocker blocker(m_organizePagesButton);
+            m_organizePagesButton->setChecked(false);
+        }
+        rebuildPageLayout();
+    }
+    setSelectionMode(enabled ? SelectionMode::Objects : SelectionMode::Read);
 }
 
 void PdfViewerWidget::setOrganizePagesEnabled(bool enabled)
@@ -1798,12 +1818,8 @@ void PdfViewerWidget::setOrganizePagesEnabled(bool enabled)
         setSelectionMode(SelectionMode::Page);
         if (m_pageLayout != PageLayout::Continuous)
             setPageLayout(PageLayout::Continuous);
-    }
-    for (QLabel *label : m_pageLabels) {
-        label->setCursor(enabled ? Qt::OpenHandCursor
-                                 : (m_selectionMode == SelectionMode::Region
-                                        ? Qt::CrossCursor
-                                        : Qt::PointingHandCursor));
+    } else if (m_editingPdf) {
+        setSelectionMode(SelectionMode::Objects);
     }
     rebuildPageLayout();
     syncEditControls();
@@ -2285,7 +2301,7 @@ void PdfViewerWidget::rebuildPagesAfterStructure(
         m_pageSpinBox->setRange(1, m_pageIds.size());
         m_pageCountLabel->setText(QStringLiteral("/ %1").arg(m_pageIds.size()));
     }
-    setSelectionMode(SelectionMode::Page);
+    setSelectionMode(m_selectionMode);
     applyZoom();
     syncNavigationControls();
     QTimer::singleShot(0, this, &PdfViewerWidget::renderVisiblePages);
@@ -3233,6 +3249,8 @@ bool PdfViewerWidget::eventFilter(QObject *watched, QEvent *event)
                 return false;
 
             setCurrentPageFromPointer(pageIndex);
+            if (m_selectionMode == SelectionMode::Read)
+                return true;
             if (m_selectionMode == SelectionMode::Objects) {
                 if (pageIndex != m_objectPageIndex)
                     refreshPageObjects();
