@@ -873,8 +873,8 @@
         <translation>Texto</translation>
     </message>
     <message>
-        <source> pt</source>
-        <translation> pt</translation>
+        <source>Size</source>
+        <translation>Tamaño</translation>
     </message>
     <message>
         <source>Edit text and images, then organize pages</source>
