@@ -6,6 +6,8 @@
 #include <QHash>
 #include <QRectF>
 #include <QSet>
+
+#include <functional>
 #include <QSizeF>
 #include <QString>
 #include <QVector>
@@ -160,6 +162,8 @@ private:
     void finishPageMarquee();
     void moveSelectedPagesTo(int insertionIndex);
     void copySelectedPages(bool cut);
+    void copySelectedPages(bool cut, bool keepOnClipboard);
+    void deleteSelectedPages();
     void finishPageCopy(const QByteArray &pageArchive, int pageCount);
     void extractSelectedPages();
     void insertBlankPageAt(int insertionIndex);
@@ -215,6 +219,17 @@ private:
     void rotateSelectedPages(bool clockwise);
     void cropSelectedRegion();
     void lightenSelectedPage(int overridePageIndex = -1);
+    void replaceSelectedPagesWithRaster(const QString &description,
+                                       const std::function<QImage(const QImage &)> &transform);
+    void invertSelectedPages();
+    void flattenSelectedPages();
+    void autoCropSelectedPages();
+    void splitSelectedPages();
+    void clearSelectedPageView();
+    void improveSelectedScans();
+    void correctSelectedPerspective();
+    void compressDocument();
+    void editSelectedPageExternally();
     void finishDocumentTransform(bool success, const QVector<QSizeF> &pageSizes,
                                  const QVector<int> &affectedPages, bool clearRegion,
                                  const QString &historyDescription,
@@ -304,6 +319,7 @@ private:
     QToolButton *m_rotateClockwiseButton = nullptr;
     QToolButton *m_organizePagesButton = nullptr;
     QAction *m_cutPagesAction = nullptr;
+    QAction *m_deletePagesAction = nullptr;
     QAction *m_copyPagesAction = nullptr;
     QAction *m_extractPagesAction = nullptr;
     PageLayout m_pageLayout = PageLayout::Continuous;
@@ -328,6 +344,7 @@ private:
     QTimer *m_imageReloadTimer = nullptr;
     QString m_imageEditPath;
     int m_imageEditPage = -1;
+    bool m_editingWholePage = false;
     QVector<int> m_imageEditObjectPath;
     QByteArray m_imageEditApplied;
     bool m_organizePagesEnabled = false;

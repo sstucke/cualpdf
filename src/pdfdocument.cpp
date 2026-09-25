@@ -1022,6 +1022,111 @@ bool PdfDocument::cropPages(const QVector<int> &pageIndexes,
     return transformed;
 }
 
+namespace {
+int shrinkImageObject(FPDF_PAGEOBJECT object, double maxWidth, double maxHeight)
+{
+    if (!object || FPDFPageObj_GetType(object) != FPDF_PAGEOBJ_IMAGE)
+        return 0;
+    const FPDF_BITMAP bitmap = FPDFImageObj_GetBitmap(object);
+    if (!bitmap)
+        return 0;
+    const int width = FPDFBitmap_GetWidth(bitmap);
+    const int height = FPDFBitmap_GetHeight(bitmap);
+    const int limitW = qMax(64, qRound(maxWidth));
+    const int limitH = qMax(64, qRound(maxHeight));
+    if (width <= limitW && height <= limitH) {
+        FPDFBitmap_Destroy(bitmap);
+        return 0;
+    }
+    QImage image(static_cast<uchar *>(FPDFBitmap_GetBuffer(bitmap)), width, height,
+                 FPDFBitmap_GetStride(bitmap), QImage::Format_ARGB32);
+    if (FPDFBitmap_GetFormat(bitmap) != FPDFBitmap_BGRA
+        && FPDFBitmap_GetFormat(bitmap) != FPDFBitmap_BGRx)
+        image = image.convertToFormat(QImage::Format_ARGB32);
+    else
+        image = image.copy();
+    FPDFBitmap_Destroy(bitmap);
+    const QImage scaled = image.scaled(limitW, limitH, Qt::KeepAspectRatio, Qt::SmoothTransformation)
+                              .convertToFormat(QImage::Format_RGB32);
+    const FPDF_BITMAP smaller = FPDFBitmap_Create(scaled.width(), scaled.height(), /*alpha=*/0);
+    if (!smaller)
+        return 0;
+    auto *buffer = static_cast<uchar *>(FPDFBitmap_GetBuffer(smaller));
+    const int stride = FPDFBitmap_GetStride(smaller);
+    for (int row = 0; row < scaled.height(); ++row) {
+        std::memcpy(buffer + static_cast<size_t>(row) * stride, scaled.constScanLine(row),
+                    static_cast<size_t>(scaled.width()) * 4);
+    }
+    const bool applied = FPDFImageObj_SetBitmap(nullptr, 0, object, smaller);
+    FPDFBitmap_Destroy(smaller);
+    return applied ? 1 : 0;
+}
+
+int shrinkContainer(FPDF_PAGE page, FPDF_PAGEOBJECT form, int count, bool isForm)
+{
+    const double maxWidth = FPDF_GetPageWidthF(page) * 200.0 / 72.0;
+    const double maxHeight = FPDF_GetPageHeightF(page) * 200.0 / 72.0;
+    int changed = 0;
+    for (int index = 0; index < count; ++index) {
+        const FPDF_PAGEOBJECT object = isForm
+                                           ? FPDFFormObj_GetObject(form, static_cast<unsigned long>(index))
+                                           : FPDFPage_GetObject(page, index);
+        if (!object)
+            continue;
+        if (FPDFPageObj_GetType(object) == FPDF_PAGEOBJ_FORM) {
+            changed += shrinkContainer(page, object, FPDFFormObj_CountObjects(object), true);
+            continue;
+        }
+        changed += shrinkImageObject(object, maxWidth, maxHeight);
+    }
+    return changed;
+}
+}
+
+int PdfDocument::compressImages()
+{
+    if (!m_document)
+        return 0;
+    const QMutexLocker locker(&pdfiumMutex());
+    const auto document = static_cast<FPDF_DOCUMENT>(m_document);
+    const int pageCount = FPDF_GetPageCount(document);
+    int changed = 0;
+    for (int pageIndex = 0; pageIndex < pageCount; ++pageIndex) {
+        const FPDF_PAGE page = FPDF_LoadPage(document, pageIndex);
+        if (!page)
+            continue;
+        const int count = shrinkContainer(page, nullptr, FPDFPage_CountObjects(page), false);
+        if (count > 0)
+            FPDFPage_GenerateContent(page);
+        changed += count;
+        FPDF_ClosePage(page);
+    }
+    return changed;
+}
+
+bool PdfDocument::resetPageView(const QVector<int> &pageIndexes)
+{
+    if (!m_document || pageIndexes.isEmpty())
+        return false;
+    const QMutexLocker locker(&pdfiumMutex());
+    const auto document = static_cast<FPDF_DOCUMENT>(m_document);
+    const int pageCount = FPDF_GetPageCount(document);
+    for (const int pageIndex : pageIndexes) {
+        if (pageIndex < 0 || pageIndex >= pageCount)
+            return false;
+        const FPDF_PAGE page = FPDF_LoadPage(document, pageIndex);
+        if (!page)
+            return false;
+        float left = 0, bottom = 0, right = 0, top = 0;
+        const bool hasBox = FPDFPage_GetMediaBox(page, &left, &bottom, &right, &top);
+        FPDFPage_SetRotation(page, 0);
+        if (hasBox && right > left && top > bottom)
+            FPDFPage_SetCropBox(page, left, bottom, right, top);
+        FPDF_ClosePage(page);
+    }
+    return true;
+}
+
 QVector<PdfPageState> PdfDocument::pageStates(const QVector<int> &pageIndexes) const
 {
     if (!m_document || pageIndexes.isEmpty())
@@ -1140,24 +1245,38 @@ QByteArray PdfDocument::createBlankPageArchive(const QSizeF &pageSize)
 
 QByteArray PdfDocument::createImagePageArchive(const QImage &image, const QSizeF &pageSize)
 {
-    if (image.isNull() || pageSize.width() <= 0.0 || pageSize.height() <= 0.0)
-        return {};
+    return createImagePagesArchive({image}, {pageSize});
+}
 
-    // FPDFBitmap_Create(..., alpha=0) yields BGRx byte order, matching
-    // QImage::Format_RGB32's in-memory layout — see renderPage() above.
-    const QImage source = image.convertToFormat(QImage::Format_RGB32);
+QByteArray PdfDocument::createImagePagesArchive(const QVector<QImage> &images,
+                                                const QVector<QSizeF> &pageSizes)
+{
+    if (images.isEmpty() || images.size() != pageSizes.size())
+        return {};
+    for (int index = 0; index < images.size(); ++index) {
+        if (images.at(index).isNull() || pageSizes.at(index).width() <= 0.0
+            || pageSizes.at(index).height() <= 0.0)
+            return {};
+    }
 
     const QMutexLocker locker(&pdfiumMutex());
     const FPDF_DOCUMENT archiveDocument = FPDF_CreateNewDocument();
     if (!archiveDocument)
         return {};
 
-    QByteArray archive;
-    const FPDF_PAGE page = FPDFPage_New(archiveDocument, 0,
-                                        pageSize.width(), pageSize.height());
-    if (page) {
+    bool wroteEveryPage = true;
+    for (int index = 0; index < images.size(); ++index) {
+        const QImage source = images.at(index).convertToFormat(QImage::Format_RGB32);
+        const QSizeF pageSize = pageSizes.at(index);
+        const FPDF_PAGE page = FPDFPage_New(archiveDocument, index,
+                                            pageSize.width(), pageSize.height());
+        if (!page) {
+            wroteEveryPage = false;
+            break;
+        }
         const FPDF_BITMAP bitmap =
             FPDFBitmap_Create(source.width(), source.height(), /*alpha=*/0);
+        bool wrotePage = false;
         if (bitmap) {
             auto *buffer = static_cast<uchar *>(FPDFBitmap_GetBuffer(bitmap));
             const int stride = FPDFBitmap_GetStride(bitmap);
@@ -1166,23 +1285,24 @@ QByteArray PdfDocument::createImagePageArchive(const QImage &image, const QSizeF
                            source.constScanLine(row),
                            static_cast<size_t>(source.width()) * 4);
             }
-
             const FPDF_PAGEOBJECT imageObject = FPDFPageObj_NewImageObj(archiveDocument);
             if (imageObject && FPDFImageObj_SetBitmap(nullptr, 0, imageObject, bitmap)) {
-                // Image objects start as a 1x1 unit square; scale to fill
-                // the page exactly.
                 FPDFPageObj_Transform(imageObject, pageSize.width(), 0, 0,
                                       pageSize.height(), 0, 0);
                 FPDFPage_InsertObject(page, imageObject);
-                if (FPDFPage_GenerateContent(page))
-                    archive = serializeDocument(archiveDocument);
+                wrotePage = FPDFPage_GenerateContent(page);
             } else if (imageObject) {
                 FPDFPageObj_Destroy(imageObject);
             }
             FPDFBitmap_Destroy(bitmap);
         }
         FPDF_ClosePage(page);
+        if (!wrotePage) {
+            wroteEveryPage = false;
+            break;
+        }
     }
+    const QByteArray archive = wroteEveryPage ? serializeDocument(archiveDocument) : QByteArray();
     FPDF_CloseDocument(archiveDocument);
     return archive;
 }
