@@ -25,6 +25,7 @@ class QLabel;
 class QLineEdit;
 class QScrollArea;
 class QSpinBox;
+class QRubberBand;
 class QToolBar;
 class QToolButton;
 class PdfInsertionPlaceholder;
@@ -154,6 +155,9 @@ private:
     void showPageContextMenu(int pageIndex, const QPoint &globalPosition);
     void showInsertionContextMenu(int insertionIndex, const QPoint &globalPosition);
     void startSelectedPageDrag(QLabel *sourceLabel);
+    void beginPageMarquee(const QPoint &containerPosition, Qt::KeyboardModifiers modifiers);
+    void updatePageMarquee(const QPoint &containerPosition);
+    void finishPageMarquee();
     void moveSelectedPagesTo(int insertionIndex);
     void copySelectedPages(bool cut);
     void finishPageCopy(const QByteArray &pageArchive, int pageCount);
@@ -329,6 +333,10 @@ private:
     bool m_organizePagesEnabled = false;
     QPoint m_pageDragStart;
     int m_pageDragSourceIndex = -1;
+    bool m_marqueeSelecting = false;
+    QPoint m_marqueeOrigin;
+    QSet<int> m_marqueeBase;
+    QRubberBand *m_marquee = nullptr;
     bool m_transformInProgress = false;
     bool m_saveInProgress = false;
     bool m_modified = false;
