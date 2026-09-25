@@ -25,7 +25,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets LinguistTools)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets LinguistTools PrintSupport)
 
 set(CUALPDF_VERSION "development")
 if(DEFINED ENV{GITHUB_REF_TYPE} AND "$ENV{GITHUB_REF_TYPE}" STREQUAL "tag")
@@ -241,13 +241,15 @@ qt_add_executable(cualpdf
     src/appsettings.h
     src/preferencesdialog.cpp
     src/preferencesdialog.h
+    src/printdialog.cpp
+    src/printdialog.h
     src/tips.cpp
     src/tips.h
     src/tipsdialog.cpp
     src/tipsdialog.h
 )
 
-target_link_libraries(cualpdf PRIVATE Qt6::Widgets pdfium opencv_core opencv_imgproc)
+target_link_libraries(cualpdf PRIVATE Qt6::Widgets Qt6::PrintSupport pdfium opencv_core opencv_imgproc)
 target_include_directories(cualpdf PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
 # OpenCV, built as a raw add_subdirectory() above (not an installed package

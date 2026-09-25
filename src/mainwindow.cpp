@@ -220,6 +220,11 @@ MainWindow::MainWindow(QWidget *parent)
     ui->menuFile->insertAction(ui->menuRecent->menuAction(), m_saveAction);
     connect(m_saveAction, &QAction::triggered, this, &MainWindow::saveCurrentDocument);
 
+    connect(ui->actionPrint, &QAction::triggered, this, [this]() {
+        if (auto *viewer = qobject_cast<PdfViewerWidget *>(ui->tabWidget->currentWidget()))
+            viewer->printDocument();
+    });
+
     setupEditMenu();
 
     auto *preferencesAction = new QAction(tr("Preferences…"), this);

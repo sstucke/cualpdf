@@ -379,6 +379,7 @@
      <string>&amp;File</string>
     </property>
     <addaction name="actionOpenFolder"/>
+    <addaction name="actionPrint"/>
     <widget class="QMenu" name="menuRecent">
      <property name="title">
       <string>&amp;Recent</string>
@@ -420,11 +421,23 @@
     <bool>false</bool>
    </attribute>
    <addaction name="actionOpenFolder"/>
+   <addaction name="actionPrint"/>
    <addaction name="separator"/>
    <addaction name="actionGoUp"/>
    <addaction name="actionRefresh"/>
   </widget>
   <widget class="QStatusBar" name="statusbar"/>
+  <action name="actionPrint">
+   <property name="text">
+    <string>&amp;Print…</string>
+   </property>
+   <property name="shortcut">
+    <string notr="true">Ctrl+P</string>
+   </property>
+   <property name="icon">
+    <iconset theme="document-print"/>
+   </property>
+  </action>
   <action name="actionOpenFolder">
    <property name="text">
     <string>&amp;Open Folder…</string>

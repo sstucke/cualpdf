@@ -61,6 +61,7 @@ public:
 public slots:
     void goToPage(int pageIndex);
     void setZoomPercent(int percent);
+    void printDocument();
     void saveDocument(bool createTimestampedBackup, int backupVersionLimit);
     void undo();
     void redo();
