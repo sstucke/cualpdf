@@ -625,6 +625,58 @@
         <translation>Cortar</translation>
     </message>
     <message>
+        <source>Delete</source>
+        <translation>Eliminar</translation>
+    </message>
+    <message>
+        <source>Invert Colors</source>
+        <translation>Invertir colores</translation>
+    </message>
+    <message>
+        <source>Flatten</source>
+        <translation>Aplanar</translation>
+    </message>
+    <message>
+        <source>Auto Crop</source>
+        <translation>Recorte automático</translation>
+    </message>
+    <message>
+        <source>Split Page</source>
+        <translation>Dividir página</translation>
+    </message>
+    <message>
+        <source>Clear Rotation and Crop</source>
+        <translation>Limpiar rotación y recorte</translation>
+    </message>
+    <message>
+        <source>Invert colors</source>
+        <translation>Invertir colores</translation>
+    </message>
+    <message>
+        <source>Flatten pages</source>
+        <translation>Aplanar páginas</translation>
+    </message>
+    <message>
+        <source>Auto crop</source>
+        <translation>Recorte automático</translation>
+    </message>
+    <message>
+        <source>Split pages</source>
+        <translation>Dividir páginas</translation>
+    </message>
+    <message>
+        <source>Clear rotation and crop</source>
+        <translation>Limpiar rotación y recorte</translation>
+    </message>
+    <message>
+        <source>The selected pages could not be changed.</source>
+        <translation>No se pudieron cambiar las páginas seleccionadas.</translation>
+    </message>
+    <message>
+        <source>The selected pages could not be split.</source>
+        <translation>No se pudieron dividir las páginas seleccionadas.</translation>
+    </message>
+    <message>
         <source>Copy</source>
         <translation>Copiar</translation>
     </message>
@@ -671,6 +723,10 @@
     <message>
         <source>Cut pages</source>
         <translation>Cortar páginas</translation>
+    </message>
+    <message>
+        <source>Delete pages</source>
+        <translation>Eliminar páginas</translation>
     </message>
     <message>
         <source>The blank page could not be created.</source>

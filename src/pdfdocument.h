@@ -102,6 +102,9 @@ public:
     // Applies page-dictionary transformations to the loaded document. These
     // changes live in memory until a save workflow persists the document.
     bool rotatePages(const QVector<int> &pageIndexes, bool clockwise);
+    bool resetPageView(const QVector<int> &pageIndexes);
+    // Shrinks embedded images that are larger than about 200 dpi on the page.
+    int compressImages();
     bool cropPages(const QVector<int> &pageIndexes, const QMarginsF &marginsPoints);
     QVector<PdfPageState> pageStates(const QVector<int> &pageIndexes) const;
     bool restorePageStates(const QVector<PdfPageState> &states);
@@ -112,6 +115,8 @@ public:
     // page's content for a raster result (e.g. after "Aclarar") via the same
     // archive-import path insert/paste already use, so it gets undo for free.
     static QByteArray createImagePageArchive(const QImage &image, const QSizeF &pageSize);
+    static QByteArray createImagePagesArchive(const QVector<QImage> &images,
+                                              const QVector<QSizeF> &pageSizes);
     static bool mergeFiles(const QStringList &inputPaths, const QString &outputPath,
                            QString *failedInputPath, QString *fileErrorMessage);
     bool restorePageStructure(const QVector<quint64> &currentPageIds,
