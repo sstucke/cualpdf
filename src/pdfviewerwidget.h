@@ -190,6 +190,8 @@ private:
     const PdfPageObjectInfo *selectedTextObject() const;
     void rerenderEditedPage(int pageIndex);
     void syncTextFormatBar();
+    void placeTextFormatBar();
+    QPoint snapDragOffset(const QPoint &raw);
     void applyTextFontSize(int points);
     void applyTextColor();
     void applyTextTypeface();
@@ -268,7 +270,9 @@ private:
     QToolButton *m_editPdfButton = nullptr;
     QWidget *m_textFormatBar = nullptr;
     QComboBox *m_fontCombo = nullptr;
-    QSpinBox *m_fontSizeSpin = nullptr;
+    QComboBox *m_fontSizeCombo = nullptr;
+    QVector<int> m_alignGuideXs;
+    QVector<int> m_alignGuideYs;
     QToolButton *m_boldButton = nullptr;
     QToolButton *m_italicButton = nullptr;
     QToolButton *m_textColorButton = nullptr;

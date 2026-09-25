@@ -12,6 +12,7 @@
 #include <QContextMenuEvent>
 #include <QCoreApplication>
 #include <QColorDialog>
+#include <QCompleter>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
@@ -32,6 +33,7 @@
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QListView>
 #include <QLineEdit>
 #include <QLoggingCategory>
 #include <QMenu>
@@ -761,12 +763,15 @@ public:
     }
 
     void setObjectOverlay(const QVector<QRect> &bounds, int selectedIndex, int hoveredIndex,
-                          const QPoint &dragOffset)
+                          const QPoint &dragOffset, const QVector<int> &guideXs,
+                          const QVector<int> &guideYs)
     {
         m_objectBounds = bounds;
         m_selectedObject = selectedIndex;
         m_hoveredObject = hoveredIndex;
         m_objectDragOffset = dragOffset;
+        m_guideXs = guideXs;
+        m_guideYs = guideYs;
         update();
     }
 
@@ -814,6 +819,12 @@ protected:
         }
 
         painter.setBrush(Qt::NoBrush);
+        painter.setPen(QPen(QColor(QStringLiteral("#e040a0")), 1));
+        for (const int x : m_guideXs)
+            painter.drawLine(x, 0, x, height());
+        for (const int y : m_guideYs)
+            painter.drawLine(0, y, width(), y);
+
         for (int index = 0; index < m_objectBounds.size(); ++index) {
             if (index != m_selectedObject && index != m_hoveredObject)
                 continue;
@@ -833,6 +844,8 @@ private:
     int m_selectedObject = -1;
     int m_hoveredObject = -1;
     QPoint m_objectDragOffset;
+    QVector<int> m_guideXs;
+    QVector<int> m_guideYs;
 };
 }
 
@@ -1167,18 +1180,28 @@ void PdfViewerWidget::buildToolbar()
     auto *formatLayout = new QHBoxLayout(m_textFormatBar);
     formatLayout->setContentsMargins(8, 2, 8, 2);
     formatLayout->setSpacing(4);
-    m_textFormatBar->setStyleSheet(QStringLiteral(
-        "QWidget { background: palette(window); }"
-        "QToolButton { border: none; border-radius: 4px; padding: 2px 7px; min-width: 18px; }"
-        "QToolButton:checked { background: palette(highlight); color: palette(highlighted-text); }"
-        "QToolButton:hover { background: palette(midlight); }"));
+
     m_fontCombo = new QComboBox(m_textFormatBar);
+    m_fontCombo->setEditable(true);
+    m_fontCombo->setInsertPolicy(QComboBox::NoInsert);
     m_fontCombo->setMinimumWidth(180);
-    m_fontCombo->setMaxVisibleItems(14);
-    m_fontSizeSpin = new QSpinBox(m_textFormatBar);
-    m_fontSizeSpin->setRange(6, 144);
-    m_fontSizeSpin->setSuffix(tr(" pt"));
-    m_fontSizeSpin->setFixedWidth(72);
+    m_fontCombo->setMaxVisibleItems(12);
+    auto *fontList = new QListView(m_fontCombo);
+    fontList->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    m_fontCombo->setView(fontList);
+    auto *fontCompleter = new QCompleter(m_fontCombo->model(), m_fontCombo);
+    fontCompleter->setFilterMode(Qt::MatchContains);
+    fontCompleter->setCaseSensitivity(Qt::CaseInsensitive);
+    fontCompleter->setCompletionMode(QCompleter::PopupCompletion);
+    fontCompleter->setMaxVisibleItems(12);
+    m_fontCombo->setCompleter(fontCompleter);
+    m_fontSizeCombo = new QComboBox(m_textFormatBar);
+    m_fontSizeCombo->setEditable(true);
+    m_fontSizeCombo->setInsertPolicy(QComboBox::NoInsert);
+    m_fontSizeCombo->setFixedWidth(64);
+    m_fontSizeCombo->setToolTip(tr("Size"));
+    for (const int size : {6, 7, 8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 48, 72})
+        m_fontSizeCombo->addItem(QString::number(size));
     m_boldButton = new QToolButton(m_textFormatBar);
     m_boldButton->setText(QStringLiteral("B"));
     m_boldButton->setCheckable(true);
@@ -1205,7 +1228,7 @@ void PdfViewerWidget::buildToolbar()
     m_alignRightButton->setText(QStringLiteral("⟹"));
     m_alignRightButton->setToolTip(tr("Align right"));
     formatLayout->addWidget(m_fontCombo);
-    formatLayout->addWidget(m_fontSizeSpin);
+    formatLayout->addWidget(m_fontSizeCombo);
     formatLayout->addWidget(m_boldButton);
     formatLayout->addWidget(m_italicButton);
     formatLayout->addWidget(m_textColorButton);
@@ -1213,12 +1236,28 @@ void PdfViewerWidget::buildToolbar()
     formatLayout->addWidget(m_alignLeftButton);
     formatLayout->addWidget(m_alignCenterButton);
     formatLayout->addWidget(m_alignRightButton);
-    formatLayout->addStretch();
-    layout()->addWidget(m_textFormatBar);
+    m_textFormatBar->setObjectName(QStringLiteral("textFormatBar"));
+    m_textFormatBar->setAttribute(Qt::WA_StyledBackground);
+    m_textFormatBar->setStyleSheet(QStringLiteral(
+        "QWidget#textFormatBar { background: palette(window); border: 1px solid palette(mid); border-radius: 6px; }"
+        "QToolButton { border: none; border-radius: 4px; padding: 2px 7px; min-width: 18px; }"
+        "QToolButton:checked { background: palette(highlight); color: palette(highlighted-text); }"
+        "QToolButton:hover { background: palette(midlight); }"));
     m_textFormatBar->hide();
+    m_textFormatBar->raise();
 
     connect(m_fontCombo, &QComboBox::activated, this, [this](int) { applyTextTypeface(); });
-    connect(m_fontSizeSpin, &QSpinBox::valueChanged, this, &PdfViewerWidget::applyTextFontSize);
+    connect(m_fontCombo->lineEdit(), &QLineEdit::editingFinished, this, [this]() {
+        if (!m_updatingTextFormat)
+            applyTextTypeface();
+    });
+    connect(m_fontSizeCombo, &QComboBox::activated, this, [this](int) {
+        applyTextFontSize(m_fontSizeCombo->currentText().toInt());
+    });
+    connect(m_fontSizeCombo->lineEdit(), &QLineEdit::editingFinished, this, [this]() {
+        if (!m_updatingTextFormat)
+            applyTextFontSize(m_fontSizeCombo->currentText().toInt());
+    });
     connect(m_boldButton, &QToolButton::toggled, this, [this](bool) { applyTextTypeface(); });
     connect(m_italicButton, &QToolButton::toggled, this, [this](bool) { applyTextTypeface(); });
     connect(m_textColorButton, &QToolButton::clicked, this, &PdfViewerWidget::applyTextColor);
@@ -2408,9 +2447,10 @@ void PdfViewerWidget::updateSelectionOverlays()
             bounds.reserve(m_pageObjects.size());
             for (const PdfPageObjectInfo &object : m_pageObjects)
                 bounds.append(object.bounds);
-            label->setObjectOverlay(bounds, m_selectedObject, m_hoveredObject, m_objectDragOffset);
+            label->setObjectOverlay(bounds, m_selectedObject, m_hoveredObject, m_objectDragOffset,
+                                    m_alignGuideXs, m_alignGuideYs);
         } else {
-            label->setObjectOverlay({}, -1, -1, {});
+            label->setObjectOverlay({}, -1, -1, {}, {}, {});
         }
     }
     syncEditControls();
@@ -2608,6 +2648,7 @@ void PdfViewerWidget::syncTextFormatBar()
     m_textFormatBar->setVisible(show);
     if (!show)
         return;
+    placeTextFormatBar();
 
     m_updatingTextFormat = true;
     if (m_fontCombo->count() == 0)
@@ -2621,7 +2662,7 @@ void PdfViewerWidget::syncTextFormatBar()
     if (familyIndex >= 0)
         m_fontCombo->setCurrentIndex(familyIndex);
     if (object->fontSizePoints > 0.f)
-        m_fontSizeSpin->setValue(qRound(object->fontSizePoints));
+        m_fontSizeCombo->setCurrentText(QString::number(qRound(object->fontSizePoints)));
     m_boldButton->setChecked(object->fontWeight >= 600);
     m_italicButton->setChecked(object->italic);
     QPixmap swatch(16, 16);
@@ -2640,9 +2681,71 @@ void PdfViewerWidget::syncTextFormatBar()
     m_updatingTextFormat = false;
 }
 
+QPoint PdfViewerWidget::snapDragOffset(const QPoint &raw)
+{
+    m_alignGuideXs.clear();
+    m_alignGuideYs.clear();
+    if (m_selectedObject < 0 || m_selectedObject >= m_pageObjects.size())
+        return raw;
+
+    const QRect base = m_pageObjects[m_selectedObject].bounds.translated(raw);
+    constexpr int threshold = 6;
+    struct Candidate {
+        int delta = 0;
+        int guide = 0;
+    };
+    QVector<Candidate> horizontal;
+    QVector<Candidate> vertical;
+    const auto collect = [&](const QRect &other) {
+        const int movingX[3] = {base.left(), base.center().x(), base.right()};
+        const int otherX[3] = {other.left(), other.center().x(), other.right()};
+        for (const int moving : movingX) {
+            for (const int edge : otherX)
+                horizontal.append({edge - moving, edge});
+        }
+        const int movingY[3] = {base.top(), base.center().y(), base.bottom()};
+        const int otherY[3] = {other.top(), other.center().y(), other.bottom()};
+        for (const int moving : movingY) {
+            for (const int edge : otherY)
+                vertical.append({edge - moving, edge});
+        }
+    };
+    for (int index = 0; index < m_pageObjects.size(); ++index) {
+        if (index != m_selectedObject)
+            collect(m_pageObjects[index].bounds);
+    }
+    if (m_objectPageIndex >= 0 && m_objectPageIndex < m_pageLabels.size())
+        collect(m_pageLabels[m_objectPageIndex]->rect().adjusted(0, 0, -1, -1));
+
+    const auto bestDelta = [&](const QVector<Candidate> &candidates) {
+        int best = threshold + 1;
+        for (const Candidate &candidate : candidates) {
+            if (qAbs(candidate.delta) <= threshold && qAbs(candidate.delta) < qAbs(best))
+                best = candidate.delta;
+        }
+        return best;
+    };
+    const int snapX = bestDelta(horizontal);
+    const int snapY = bestDelta(vertical);
+    if (qAbs(snapX) <= threshold) {
+        for (const Candidate &candidate : horizontal) {
+            if (candidate.delta == snapX && !m_alignGuideXs.contains(candidate.guide))
+                m_alignGuideXs.append(candidate.guide);
+        }
+    }
+    if (qAbs(snapY) <= threshold) {
+        for (const Candidate &candidate : vertical) {
+            if (candidate.delta == snapY && !m_alignGuideYs.contains(candidate.guide))
+                m_alignGuideYs.append(candidate.guide);
+        }
+    }
+    return raw + QPoint(qAbs(snapX) <= threshold ? snapX : 0,
+                        qAbs(snapY) <= threshold ? snapY : 0);
+}
+
 void PdfViewerWidget::applyTextFontSize(int points)
 {
-    if (m_updatingTextFormat)
+    if (m_updatingTextFormat || points < 1 || points > 500)
         return;
     const PdfPageObjectInfo *object = selectedTextObject();
     if (!object || qRound(object->fontSizePoints) == points)
@@ -2697,6 +2800,9 @@ void PdfViewerWidget::applyTextTypeface()
     const QString family = m_fontCombo->currentText();
     const bool bold = m_boldButton->isChecked();
     const bool italic = m_italicButton->isChecked();
+    if (family.compare(object->fontFamily, Qt::CaseInsensitive) == 0
+        && bold == (object->fontWeight >= 600) && italic == object->italic)
+        return;
     const QString standard = standardPdfFont(family, bold, italic);
     const QByteArray fontData = standard.isEmpty() ? fontFileMatching(family, bold, italic) : QByteArray();
     if (standard.isEmpty() && fontData.isEmpty())
@@ -3721,7 +3827,7 @@ bool PdfViewerWidget::eventFilter(QObject *watched, QEvent *event)
             && m_draggingObject && pageIndex == m_objectPageIndex) {
             auto *mouseEvent = static_cast<QMouseEvent *>(event);
             if (mouseEvent->buttons().testFlag(Qt::LeftButton)) {
-                m_objectDragOffset = mouseEvent->position().toPoint() - m_objectPressPos;
+                m_objectDragOffset = snapDragOffset(mouseEvent->position().toPoint() - m_objectPressPos);
                 updateSelectionOverlays();
                 return true;
             }
@@ -3730,6 +3836,8 @@ bool PdfViewerWidget::eventFilter(QObject *watched, QEvent *event)
         if (event->type() == QEvent::MouseButtonRelease && m_selectionMode == SelectionMode::Objects
             && m_draggingObject && pageIndex == m_objectPageIndex) {
             m_draggingObject = false;
+            m_alignGuideXs.clear();
+            m_alignGuideYs.clear();
             commitObjectMove();
             return true;
         }
@@ -3797,9 +3905,28 @@ bool PdfViewerWidget::eventFilter(QObject *watched, QEvent *event)
     return QWidget::eventFilter(watched, event);
 }
 
+void PdfViewerWidget::placeTextFormatBar()
+{
+    if (!m_textFormatBar || !m_textFormatBar->isVisible())
+        return;
+    m_textFormatBar->adjustSize();
+    const QSize hint = m_textFormatBar->sizeHint();
+    const int barWidth = qMin(hint.width(), qMax(0, width() - 16));
+    const int barHeight = hint.height();
+    int top = 8;
+    const QList<QToolBar *> bars = findChildren<QToolBar *>(Qt::FindDirectChildrenOnly);
+    for (const QToolBar *bar : bars) {
+        if (bar->isVisible())
+            top = qMax(top, bar->geometry().bottom() + 8);
+    }
+    m_textFormatBar->setGeometry((width() - barWidth) / 2, top, barWidth, barHeight);
+    m_textFormatBar->raise();
+}
+
 void PdfViewerWidget::resizeEvent(QResizeEvent *event)
 {
     QWidget::resizeEvent(event);
+    placeTextFormatBar();
     if (!m_valid)
         return;
 
