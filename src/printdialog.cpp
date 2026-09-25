@@ -6,15 +6,19 @@
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QFormLayout>
+#include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
+#include <QRadioButton>
+#include <QSlider>
 #include <QPainter>
 #include <QMessageBox>
 #include <QPrintDialog>
 #include <QPrinter>
 #include <QPrinterInfo>
 #include <QPushButton>
+#include <QSignalBlocker>
 #include <QSpinBox>
 #include <QVBoxLayout>
 
@@ -92,14 +96,32 @@ protected:
     void paintEvent(QPaintEvent *) override
     {
         QPainter painter(this);
-        painter.fillRect(rect(), QColor(74, 74, 74));
+        static const QPixmap felt = [] {
+            QImage cloth(64, 64, QImage::Format_RGB32);
+            cloth.fill(QColor(22, 92, 58));
+            for (int y = 0; y < cloth.height(); ++y) {
+                for (int x = 0; x < cloth.width(); ++x) {
+                    const int noise = (x * 17 + y * 43 + (x * y) % 13) & 255;
+                    if (noise > 214)
+                        cloth.setPixelColor(x, y, QColor(46, 122, 82));
+                    else if (noise < 28)
+                        cloth.setPixelColor(x, y, QColor(12, 62, 38));
+                }
+            }
+            return QPixmap::fromImage(cloth);
+        }();
+        painter.drawTiledPixmap(rect(), felt);
         if (m_image.isNull())
             return;
         const QSize fitted = m_image.size().scaled(size(), Qt::KeepAspectRatio);
         const QRect target(QPoint((width() - fitted.width()) / 2, (height() - fitted.height()) / 2),
                            fitted);
         painter.setRenderHint(QPainter::SmoothPixmapTransform);
+        painter.fillRect(target.adjusted(5, 7, 7, 9), QColor(0, 0, 0, 80));
+        painter.fillRect(target, Qt::white);
         painter.drawImage(target, m_image);
+        painter.setPen(QPen(QColor(0, 0, 0, 40), 1));
+        painter.drawRect(target.adjusted(0, 0, -1, -1));
     }
 
 private:
@@ -111,10 +133,11 @@ PrintDialog::~PrintDialog()
     delete m_printer;
 }
 
-PrintDialog::PrintDialog(const std::shared_ptr<PdfDocument> &document, QWidget *parent)
+PrintDialog::PrintDialog(const std::shared_ptr<PdfDocument> &document, int currentPage, QWidget *parent)
     : QDialog(parent)
     , m_document(document)
     , m_printer(new QPrinter(QPrinter::HighResolution))
+    , m_currentPage(qMax(0, currentPage))
 {
     setWindowTitle(tr("Print"));
     resize(980, 680);
@@ -130,74 +153,105 @@ void PrintDialog::buildUi()
     auto *previewColumn = new QVBoxLayout();
     m_preview = new SheetPreview(this);
     previewColumn->addWidget(m_preview, 1);
-    auto *sheetRow = new QHBoxLayout();
-    auto *previous = new QPushButton(tr("Previous sheet"), this);
-    auto *next = new QPushButton(tr("Next sheet"), this);
+    m_sheetSlider = new QSlider(Qt::Horizontal, this);
     m_sheetLabel = new QLabel(this);
     m_sheetLabel->setAlignment(Qt::AlignCenter);
-    sheetRow->addWidget(previous);
-    sheetRow->addWidget(m_sheetLabel, 1);
-    sheetRow->addWidget(next);
-    previewColumn->addLayout(sheetRow);
+    previewColumn->addWidget(m_sheetSlider);
+    previewColumn->addWidget(m_sheetLabel);
     root->addLayout(previewColumn, 1);
 
     auto *controls = new QVBoxLayout();
-    auto *form = new QFormLayout();
+    controls->setSpacing(10);
+
+    auto *printerGroup = new QGroupBox(tr("Printer"), this);
+    auto *printerForm = new QFormLayout(printerGroup);
     m_printerCombo = new QComboBox(this);
     auto *propertiesButton = new QPushButton(tr("Printer properties…"), this);
     auto *printerRow = new QHBoxLayout();
     printerRow->addWidget(m_printerCombo, 1);
     printerRow->addWidget(propertiesButton);
-    form->addRow(tr("Printer"), printerRow);
+    printerForm->addRow(tr("Name"), printerRow);
+    m_copiesSpin = new QSpinBox(this);
+    m_copiesSpin->setRange(1, 99);
+    m_collateCheck = new QCheckBox(tr("Collate"), this);
+    m_collateCheck->setChecked(true);
+    auto *copiesRow = new QHBoxLayout();
+    copiesRow->addWidget(m_copiesSpin);
+    copiesRow->addWidget(m_collateCheck);
+    copiesRow->addStretch();
+    printerForm->addRow(tr("Copies"), copiesRow);
+    m_colorCombo = new QComboBox(this);
+    m_colorCombo->addItem(tr("Color"), QPrinter::Color);
+    m_colorCombo->addItem(tr("Grayscale"), QPrinter::GrayScale);
+    printerForm->addRow(tr("Color"), m_colorCombo);
+    m_duplexCombo = new QComboBox(this);
+    m_duplexCombo->addItem(tr("One side"), QPrinter::DuplexNone);
+    m_duplexCombo->addItem(tr("Both sides, long edge"), QPrinter::DuplexLongSide);
+    m_duplexCombo->addItem(tr("Both sides, short edge"), QPrinter::DuplexShortSide);
+    printerForm->addRow(tr("Sides"), m_duplexCombo);
+    controls->addWidget(printerGroup);
 
-    m_dispositionCombo = new QComboBox(this);
-    m_dispositionCombo->addItem(tr("1 page per sheet"), 1);
-    m_dispositionCombo->addItem(tr("2 pages per sheet"), 2);
-    m_dispositionCombo->addItem(tr("4 pages per sheet"), 4);
-    m_dispositionCombo->addItem(tr("Booklet"), 0);
-    form->addRow(tr("Layout"), m_dispositionCombo);
+    auto *pagesGroup = new QGroupBox(tr("Pages to print"), this);
+    auto *pagesLayout = new QVBoxLayout(pagesGroup);
+    m_allPagesRadio = new QRadioButton(tr("All"), this);
+    m_currentPageRadio = new QRadioButton(tr("Current page"), this);
+    m_currentPageRadio->setEnabled(m_document && m_currentPage >= 0 && m_currentPage < m_document->pageCount());
+    m_rangeRadio = new QRadioButton(tr("Pages"), this);
+    m_rangeEdit = new QLineEdit(this);
+    const int pageCount = m_document ? m_document->pageCount() : 0;
+    m_rangeEdit->setText(pageCount > 1 ? QStringLiteral("%1-%2").arg(1).arg(pageCount)
+                                       : QString::number(qMax(1, pageCount)));
+    m_rangeRadio->setChecked(true);
+    m_rangeEdit->setEnabled(true);
+    auto *rangeRow = new QHBoxLayout();
+    rangeRow->addWidget(m_rangeRadio);
+    rangeRow->addWidget(m_rangeEdit, 1);
+    pagesLayout->addWidget(m_allPagesRadio);
+    pagesLayout->addWidget(m_currentPageRadio);
+    pagesLayout->addLayout(rangeRow);
+    auto *rangeHint = new QLabel(tr("Commas separate ranges. Example: 1-3, 5, 8-10"), this);
+    rangeHint->setStyleSheet(QStringLiteral("color: palette(mid);"));
+    pagesLayout->addWidget(rangeHint);
+    controls->addWidget(pagesGroup);
 
-    m_scaleCombo = new QComboBox(this);
-    m_scaleCombo->addItem(tr("Fit"), QStringLiteral("fit"));
-    m_scaleCombo->addItem(tr("Fill"), QStringLiteral("fill"));
-    m_scaleCombo->addItem(tr("Actual size"), QStringLiteral("actual"));
-    form->addRow(tr("Scale"), m_scaleCombo);
-
-    m_orientationCombo = new QComboBox(this);
-    m_orientationCombo->addItem(tr("Automatic"), QStringLiteral("auto"));
-    m_orientationCombo->addItem(tr("Portrait"), QStringLiteral("portrait"));
-    m_orientationCombo->addItem(tr("Landscape"), QStringLiteral("landscape"));
-    form->addRow(tr("Orientation"), m_orientationCombo);
-
+    auto *setupGroup = new QGroupBox(tr("Page setup"), this);
+    auto *setupForm = new QFormLayout(setupGroup);
     m_paperCombo = new QComboBox(this);
     m_paperCombo->addItem(tr("A4"), QPageSize::A4);
     m_paperCombo->addItem(tr("A3"), QPageSize::A3);
     m_paperCombo->addItem(tr("Letter"), QPageSize::Letter);
     m_paperCombo->addItem(tr("Legal"), QPageSize::Legal);
     m_paperCombo->addItem(tr("Oficio"), QStringLiteral("oficio"));
-    form->addRow(tr("Paper"), m_paperCombo);
+    setupForm->addRow(tr("Size"), m_paperCombo);
+    m_orientationCombo = new QComboBox(this);
+    m_orientationCombo->addItem(tr("Automatic"), QStringLiteral("auto"));
+    m_orientationCombo->addItem(tr("Portrait"), QStringLiteral("portrait"));
+    m_orientationCombo->addItem(tr("Landscape"), QStringLiteral("landscape"));
+    setupForm->addRow(tr("Orientation"), m_orientationCombo);
+    m_scaleCombo = new QComboBox(this);
+    m_scaleCombo->addItem(tr("Fit"), QStringLiteral("fit"));
+    m_scaleCombo->addItem(tr("Fill"), QStringLiteral("fill"));
+    m_scaleCombo->addItem(tr("Actual size"), QStringLiteral("actual"));
+    setupForm->addRow(tr("Scale"), m_scaleCombo);
+    controls->addWidget(setupGroup);
 
-    m_duplexCombo = new QComboBox(this);
-    m_duplexCombo->addItem(tr("One side"), QPrinter::DuplexNone);
-    m_duplexCombo->addItem(tr("Both sides, long edge"), QPrinter::DuplexLongSide);
-    m_duplexCombo->addItem(tr("Both sides, short edge"), QPrinter::DuplexShortSide);
-    form->addRow(tr("Sides"), m_duplexCombo);
+    auto *layoutGroup = new QGroupBox(tr("Page layout"), this);
+    auto *layoutForm = new QFormLayout(layoutGroup);
+    m_dispositionCombo = new QComboBox(this);
+    m_dispositionCombo->addItem(tr("1 page per sheet"), 1);
+    m_dispositionCombo->addItem(tr("2 pages per sheet"), 2);
+    m_dispositionCombo->addItem(tr("4 pages per sheet"), 4);
+    m_dispositionCombo->addItem(tr("Booklet"), 0);
+    layoutForm->addRow(tr("Layout"), m_dispositionCombo);
+    m_marksCombo = new QComboBox(this);
+    m_marksCombo->addItem(tr("Document"), int(PdfMarkupPrint::Document));
+    m_marksCombo->addItem(tr("Document and markups"), int(PdfMarkupPrint::Markups));
+    m_marksCombo->addItem(tr("Document and stamps"), int(PdfMarkupPrint::Stamps));
+    m_marksCombo->addItem(tr("Form fields only"), int(PdfMarkupPrint::FieldsOnly));
+    m_marksCombo->setCurrentIndex(1);
+    layoutForm->addRow(tr("Comments and forms"), m_marksCombo);
+    controls->addWidget(layoutGroup);
 
-    m_colorCombo = new QComboBox(this);
-    m_colorCombo->addItem(tr("Color"), QPrinter::Color);
-    m_colorCombo->addItem(tr("Grayscale"), QPrinter::GrayScale);
-    form->addRow(tr("Color"), m_colorCombo);
-
-    m_copiesSpin = new QSpinBox(this);
-    m_copiesSpin->setRange(1, 99);
-    form->addRow(tr("Copies"), m_copiesSpin);
-    m_collateCheck = new QCheckBox(tr("Collate"), this);
-    m_collateCheck->setChecked(true);
-    form->addRow(QString(), m_collateCheck);
-    m_rangeEdit = new QLineEdit(this);
-    m_rangeEdit->setPlaceholderText(tr("All pages, or 1-3, 5"));
-    form->addRow(tr("Pages"), m_rangeEdit);
-    controls->addLayout(form);
     m_hintLabel = new QLabel(this);
     m_hintLabel->setWordWrap(true);
     controls->addWidget(m_hintLabel);
@@ -208,15 +262,15 @@ void PrintDialog::buildUi()
     controls->addWidget(buttons);
     root->addLayout(controls);
 
-    connect(previous, &QPushButton::clicked, this, [this]() {
-        m_sheet = qMax(0, m_sheet - 1);
+    connect(m_sheetSlider, &QSlider::valueChanged, this, [this](int value) {
+        m_sheet = value;
         refreshPreview();
     });
-    connect(next, &QPushButton::clicked, this, [this]() {
-        m_sheet += 1;
-        refreshPreview();
-    });
+    connect(m_rangeRadio, &QRadioButton::toggled, m_rangeEdit, &QWidget::setEnabled);
     const auto refresh = [this]() { refreshPreview(); };
+    connect(m_allPagesRadio, &QRadioButton::toggled, this, refresh);
+    connect(m_currentPageRadio, &QRadioButton::toggled, this, refresh);
+    connect(m_marksCombo, &QComboBox::currentIndexChanged, this, refresh);
     connect(m_dispositionCombo, &QComboBox::currentIndexChanged, this, [this]() {
         applyRecommendedDuplex();
         refreshPreview();
@@ -311,7 +365,18 @@ void PrintDialog::editPrinterProperties()
 
 QVector<int> PrintDialog::selectedPages() const
 {
-    return parseRange(m_rangeEdit->text(), m_document ? m_document->pageCount() : 0);
+    const int count = m_document ? m_document->pageCount() : 0;
+    if (m_currentPageRadio && m_currentPageRadio->isChecked()) {
+        if (m_currentPage >= 0 && m_currentPage < count)
+            return {m_currentPage};
+        return {};
+    }
+    if (m_rangeRadio && m_rangeRadio->isChecked())
+        return parseRange(m_rangeEdit->text(), count);
+    QVector<int> pages(count);
+    for (int i = 0; i < count; ++i)
+        pages[i] = i;
+    return pages;
 }
 
 QSizeF PrintDialog::paperPoints() const
@@ -473,7 +538,8 @@ void PrintDialog::paintSheet(QPainter *painter, const QRectF &target, int sheetI
         const int widthPx = qMax(1, qRound(placed.width() * renderDpi / 72.0));
         QImage image = m_document->renderPage(slot.pageIndex,
                                               rotate ? qMax(1, qRound(placed.height() * renderDpi / 72.0))
-                                                     : widthPx);
+                                                     : widthPx,
+                                              static_cast<PdfMarkupPrint>(m_marksCombo->currentData().toInt()));
         if (rotate)
             image = image.transformed(QTransform().rotate(90), Qt::SmoothTransformation);
         if (gray)
@@ -490,7 +556,16 @@ void PrintDialog::refreshPreview()
         m_sheet = qMax(0, built.size() - 1);
     m_sheetLabel->setText(built.isEmpty()
                               ? tr("No sheets")
-                              : tr("Sheet %1 of %2").arg(m_sheet + 1).arg(built.size()));
+                              : tr("Sheet %1 of %2  ·  %3 pages")
+                                    .arg(m_sheet + 1)
+                                    .arg(built.size())
+                                    .arg(selectedPages().size()));
+    if (m_sheetSlider) {
+        const QSignalBlocker blocker(m_sheetSlider);
+        m_sheetSlider->setEnabled(!built.isEmpty());
+        m_sheetSlider->setMaximum(qMax(0, built.size() - 1));
+        m_sheetSlider->setValue(m_sheet);
+    }
     const QString recommendation = recommendedDuplex();
     if (recommendation == QLatin1String("short"))
         m_hintLabel->setText(tr("Recommended: both sides, short edge. The preview shows each side."));

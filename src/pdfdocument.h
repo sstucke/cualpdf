@@ -11,6 +11,13 @@
 #include <QStringList>
 #include <QVector>
 
+enum class PdfMarkupPrint {
+    Document,
+    Markups,
+    Stamps,
+    FieldsOnly,
+};
+
 enum class PdfPageObjectKind {
     Unknown,
     Text,
@@ -70,7 +77,8 @@ public:
     QVector<QSizeF> allPageSizes() const;
 
     // Renders a page at the given width in pixels, preserving aspect ratio.
-    QImage renderPage(int pageIndex, int targetWidthPx) const;
+    QImage renderPage(int pageIndex, int targetWidthPx,
+                      PdfMarkupPrint marks = PdfMarkupPrint::Document) const;
 
     // Page objects in the same pixel space renderPage() uses for `deviceSize`.
     QVector<PdfPageObjectInfo> pageObjects(int pageIndex, const QSize &deviceSize) const;
