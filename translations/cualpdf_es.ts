@@ -1230,6 +1230,23 @@
     <message><source>Collate</source><translation>Intercalar</translation></message>
     <message><source>All pages, or 1-3, 5</source><translation>Todas, o 1-3, 5</translation></message>
     <message><source>Pages</source><translation>Páginas</translation></message>
+    <message><source>Name</source><translation>Nombre</translation></message>
+    <message><source>Pages to print</source><translation>Páginas a imprimir</translation></message>
+    <message><source>All</source><translation>Todas</translation></message>
+    <message><source>Current page</source><translation>Página actual</translation></message>
+    <message><source>1-3, 5, 8-10</source><translation>1-3, 5, 8-10</translation></message>
+    <message><source>Commas separate ranges. Example: 1-3, 5, 8-10</source><translation>Las comas separan rangos. Ejemplo: 1-3, 5, 8-10</translation></message>
+    <message><source>Page setup</source><translation>Configuración de página</translation></message>
+    <message><source>Size</source><translation>Tamaño</translation></message>
+    <message><source>Page layout</source><translation>Disposición de página</translation></message>
+    <message><source>Print comments and marks</source><translation>Imprimir comentarios y marcas</translation></message>
+    <message><source>Document</source><translation>Documento</translation></message>
+    <message><source>Document and markups</source><translation>Documento y marcas</translation></message>
+    <message><source>Document and stamps</source><translation>Documento y sellos</translation></message>
+    <message><source>Form fields only</source><translation>Solo campos de formulario</translation></message>
+    <message><source>Comments and forms</source><translation>Comentarios y formularios</translation></message>
+    <message><source>Print</source><translation>Imprimir</translation></message>
+    <message><source>Sheet %1 of %2  ·  %3 pages</source><translation>Hoja %1 de %2  ·  %3 páginas</translation></message>
     <message><source>Printer properties</source><translation>Propiedades de impresora</translation></message>
     <message><source>There are no pages to print.</source><translation>No hay páginas para imprimir.</translation></message>
     <message><source>The printer could not be opened.</source><translation>No se pudo abrir la impresora.</translation></message>

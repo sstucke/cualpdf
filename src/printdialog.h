@@ -14,13 +14,16 @@ class SheetPreview;
 class QSpinBox;
 class QCheckBox;
 class QLineEdit;
+class QRadioButton;
+class QSlider;
 
 class PrintDialog : public QDialog
 {
     Q_OBJECT
 
 public:
-    explicit PrintDialog(const std::shared_ptr<PdfDocument> &document, QWidget *parent = nullptr);
+    explicit PrintDialog(const std::shared_ptr<PdfDocument> &document, int currentPage,
+                         QWidget *parent = nullptr);
     ~PrintDialog() override;
 
 private:
@@ -54,6 +57,12 @@ private:
     QSpinBox *m_copiesSpin = nullptr;
     QCheckBox *m_collateCheck = nullptr;
     QLineEdit *m_rangeEdit = nullptr;
+    QRadioButton *m_allPagesRadio = nullptr;
+    QRadioButton *m_currentPageRadio = nullptr;
+    QRadioButton *m_rangeRadio = nullptr;
+    QSlider *m_sheetSlider = nullptr;
+    QComboBox *m_marksCombo = nullptr;
+    int m_currentPage = 0;
     SheetPreview *m_preview = nullptr;
     QLabel *m_sheetLabel = nullptr;
     QLabel *m_hintLabel = nullptr;

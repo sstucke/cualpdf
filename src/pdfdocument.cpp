@@ -1,6 +1,7 @@
 #include "pdfdocument.h"
 
 #include <fpdfview.h>
+#include <fpdf_annot.h>
 #include <fpdf_edit.h>
 #include <fpdf_text.h>
 #include <fpdf_ppo.h>
@@ -252,7 +253,7 @@ QVector<QSizeF> PdfDocument::allPageSizes() const
     return sizes;
 }
 
-QImage PdfDocument::renderPage(int pageIndex, int targetWidthPx) const
+QImage PdfDocument::renderPage(int pageIndex, int targetWidthPx, PdfMarkupPrint marks) const
 {
     if (!m_document || targetWidthPx <= 0)
         return {};
@@ -283,7 +284,45 @@ QImage PdfDocument::renderPage(int pageIndex, int targetWidthPx) const
     }
 
     FPDFBitmap_FillRect(bitmap, 0, 0, width, height, 0xFFFFFFFF);
-    FPDF_RenderPageBitmap(bitmap, page, 0, 0, width, height, /*rotate=*/0, /*flags=*/0);
+    QVector<QPair<FPDF_ANNOTATION, int>> hidden;
+    const int annotCount = FPDFPage_GetAnnotCount(page);
+    for (int index = 0; index < annotCount; ++index) {
+        const FPDF_ANNOTATION annot = FPDFPage_GetAnnot(page, index);
+        if (!annot)
+            continue;
+        const int subtype = FPDFAnnot_GetSubtype(annot);
+        const bool widget = subtype == FPDF_ANNOT_WIDGET || subtype == FPDF_ANNOT_XFAWIDGET;
+        const bool stamp = subtype == FPDF_ANNOT_STAMP;
+        bool keep = true;
+        switch (marks) {
+        case PdfMarkupPrint::Document:
+            keep = widget;
+            break;
+        case PdfMarkupPrint::Markups:
+            keep = true;
+            break;
+        case PdfMarkupPrint::Stamps:
+            keep = widget || stamp;
+            break;
+        case PdfMarkupPrint::FieldsOnly:
+            keep = widget;
+            break;
+        }
+        if (!keep) {
+            const int flags = FPDFAnnot_GetFlags(annot);
+            hidden.append({annot, flags});
+            FPDFAnnot_SetFlags(annot, flags | FPDF_ANNOT_FLAG_HIDDEN);
+        } else {
+            FPDFPage_CloseAnnot(annot);
+        }
+    }
+    const int flags = marks == PdfMarkupPrint::FieldsOnly ? FPDF_ANNOT : FPDF_ANNOT | FPDF_PRINTING;
+    FPDF_RenderPageBitmap(bitmap, page, 0, 0, width, height, /*rotate=*/0,
+                          marks == PdfMarkupPrint::Document && hidden.isEmpty() ? 0 : flags);
+    for (const auto &item : hidden) {
+        FPDFAnnot_SetFlags(item.first, item.second);
+        FPDFPage_CloseAnnot(item.first);
+    }
 
     const auto *buffer = static_cast<const uchar *>(FPDFBitmap_GetBuffer(bitmap));
     const int stride = FPDFBitmap_GetStride(bitmap);

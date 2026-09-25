@@ -21,6 +21,7 @@
 #include <QFileDialog>
 #include <QFileIconProvider>
 #include <QFileInfo>
+#include <QIcon>
 #include <QFileSystemModel>
 #include <QFileSystemWatcher>
 #include <QFrame>
@@ -253,6 +254,10 @@ MainWindow::MainWindow(QWidget *parent)
     ui->menuFile->insertAction(ui->menuRecent->menuAction(), m_saveAction);
     connect(m_saveAction, &QAction::triggered, this, &MainWindow::saveCurrentDocument);
 
+    if (auto *printButton = qobject_cast<QToolButton *>(ui->mainToolBar->widgetForAction(ui->actionPrint)))
+        printButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    if (ui->actionPrint->icon().isNull())
+        ui->actionPrint->setIcon(QIcon::fromTheme(QStringLiteral("document-print")));
     connect(ui->actionPrint, &QAction::triggered, this, [this]() {
         if (auto *viewer = qobject_cast<PdfViewerWidget *>(ui->tabWidget->currentWidget()))
             viewer->printDocument();

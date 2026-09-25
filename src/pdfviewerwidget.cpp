@@ -999,6 +999,14 @@ void PdfViewerWidget::buildToolbar()
     m_editPdfButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     toolbar->addWidget(m_editPdfButton);
 
+    auto *printButton = new QToolButton(toolbar);
+    printButton->setText(tr("Print"));
+    printButton->setIcon(QIcon::fromTheme(QStringLiteral("document-print")));
+    printButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    printButton->setToolTip(tr("Print…"));
+    toolbar->addWidget(printButton);
+    connect(printButton, &QToolButton::clicked, this, &PdfViewerWidget::printDocument);
+
     m_previousPageButton->setEnabled(false);
     m_pageSpinBox->setEnabled(false);
     m_nextPageButton->setEnabled(false);
@@ -1760,7 +1768,7 @@ void PdfViewerWidget::printDocument()
 {
     if (!m_valid || !m_document)
         return;
-    PrintDialog dialog(m_document, this);
+    PrintDialog dialog(m_document, m_currentPageIndex, this);
     dialog.exec();
 }
 
