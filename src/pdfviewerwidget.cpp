@@ -3,6 +3,7 @@
 #include "appsettings.h"
 #include "imageenhancement.h"
 #include "pdfdocument.h"
+#include "printdialog.h"
 
 #include <QActionGroup>
 #include <QDesktopServices>
@@ -1753,6 +1754,14 @@ void PdfViewerWidget::setCustomZoom(int percent)
     m_zoomMode = ZoomMode::Custom;
     m_zoomPercent = qBound(kMinimumZoom, percent, kMaximumZoom);
     applyZoom();
+}
+
+void PdfViewerWidget::printDocument()
+{
+    if (!m_valid || !m_document)
+        return;
+    PrintDialog dialog(m_document, this);
+    dialog.exec();
 }
 
 void PdfViewerWidget::setZoomPercent(int percent)

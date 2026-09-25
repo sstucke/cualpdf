@@ -410,6 +410,14 @@
         <translation>Guardar</translation>
     </message>
     <message>
+        <source>Print…</source>
+        <translation>Imprimir…</translation>
+    </message>
+    <message>
+        <source>&amp;Print…</source>
+        <translation>&amp;Imprimir…</translation>
+    </message>
+    <message>
         <source>Unsaved Changes</source>
         <translation>Cambios sin guardar</translation>
     </message>
@@ -1189,6 +1197,47 @@
         <source>windows tabs close all preserve keep file explorer</source>
         <translation>ventanas pestañas cerrar todas preservar mantener explorador de archivos</translation>
     </message>
+</context>
+<context>
+    <name>PrintDialog</name>
+    <message><source>Print</source><translation>Imprimir</translation></message>
+    <message><source>Previous sheet</source><translation>Hoja anterior</translation></message>
+    <message><source>Next sheet</source><translation>Hoja siguiente</translation></message>
+    <message><source>Printer properties…</source><translation>Propiedades de impresora…</translation></message>
+    <message><source>Printer</source><translation>Impresora</translation></message>
+    <message><source>1 page per sheet</source><translation>1 página por hoja</translation></message>
+    <message><source>2 pages per sheet</source><translation>2 páginas por hoja</translation></message>
+    <message><source>4 pages per sheet</source><translation>4 páginas por hoja</translation></message>
+    <message><source>Booklet</source><translation>Folleto</translation></message>
+    <message><source>Layout</source><translation>Disposición</translation></message>
+    <message><source>Fit</source><translation>Ajustar</translation></message>
+    <message><source>Fill</source><translation>Rellenar</translation></message>
+    <message><source>Actual size</source><translation>Tamaño real</translation></message>
+    <message><source>Scale</source><translation>Escala</translation></message>
+    <message><source>Automatic</source><translation>Automática</translation></message>
+    <message><source>Portrait</source><translation>Vertical</translation></message>
+    <message><source>Landscape</source><translation>Horizontal</translation></message>
+    <message><source>Orientation</source><translation>Orientación</translation></message>
+    <message><source>Paper</source><translation>Papel</translation></message>
+    <message><source>Oficio</source><translation>Oficio</translation></message>
+    <message><source>One side</source><translation>Una cara</translation></message>
+    <message><source>Both sides, long edge</source><translation>Doble faz, borde largo</translation></message>
+    <message><source>Both sides, short edge</source><translation>Doble faz, borde corto</translation></message>
+    <message><source>Sides</source><translation>Caras</translation></message>
+    <message><source>Color</source><translation>Color</translation></message>
+    <message><source>Grayscale</source><translation>Escala de grises</translation></message>
+    <message><source>Copies</source><translation>Copias</translation></message>
+    <message><source>Collate</source><translation>Intercalar</translation></message>
+    <message><source>All pages, or 1-3, 5</source><translation>Todas, o 1-3, 5</translation></message>
+    <message><source>Pages</source><translation>Páginas</translation></message>
+    <message><source>Printer properties</source><translation>Propiedades de impresora</translation></message>
+    <message><source>There are no pages to print.</source><translation>No hay páginas para imprimir.</translation></message>
+    <message><source>The printer could not be opened.</source><translation>No se pudo abrir la impresora.</translation></message>
+    <message><source>No sheets</source><translation>Sin hojas</translation></message>
+    <message><source>Sheet %1 of %2</source><translation>Hoja %1 de %2</translation></message>
+    <message><source>Recommended: both sides, short edge. The preview shows each side.</source><translation>Recomendado: doble faz, borde corto. La vista previa muestra cada cara.</translation></message>
+    <message><source>Recommended: both sides, long edge. The preview shows each side.</source><translation>Recomendado: doble faz, borde largo. La vista previa muestra cada cara.</translation></message>
+    <message><source>One page per sheet prints on one side unless you choose otherwise.</source><translation>Una página por hoja se imprime de una cara, salvo que elijas otra cosa.</translation></message>
 </context>
 <context>
     <name>TipsDialog</name>

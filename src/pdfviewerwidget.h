@@ -67,6 +67,7 @@ public slots:
     void goToPage(int pageIndex);
     void setZoomPercent(int percent);
     void setContinuousPageLayout(bool continuous);
+    void printDocument();
     void saveDocument(bool createTimestampedBackup, int backupVersionLimit);
     void undo();
     void redo();
