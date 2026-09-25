@@ -113,7 +113,11 @@ protected:
         painter.drawTiledPixmap(rect(), felt);
         if (m_image.isNull())
             return;
-        const QSize fitted = m_image.size().scaled(size(), Qt::KeepAspectRatio);
+        // Leave a desk around the sheet. A page that fills the pane has no
+        // edge, so the paper and the background read as the same thing.
+        const int margin = qMax(40, qMin(width(), height()) / 8);
+        const QSize available(qMax(1, width() - margin * 2), qMax(1, height() - margin * 2));
+        const QSize fitted = m_image.size().scaled(available, Qt::KeepAspectRatio);
         const QRect target(QPoint((width() - fitted.width()) / 2, (height() - fitted.height()) / 2),
                            fitted);
         painter.setRenderHint(QPainter::SmoothPixmapTransform);
@@ -522,9 +526,6 @@ void PrintDialog::paintSheet(QPainter *painter, const QRectF &target, int sheetI
                             target.top() + slot.paper.top() * scaleY,
                             slot.paper.width() * scaleX,
                             slot.paper.height() * scaleY);
-        painter->setPen(QPen(QColor(180, 180, 180), 1));
-        painter->setBrush(Qt::NoBrush);
-        painter->drawRect(device);
         if (slot.pageIndex < 0)
             continue;
         const QSizeF source = m_document->pageSizePoints(slot.pageIndex);

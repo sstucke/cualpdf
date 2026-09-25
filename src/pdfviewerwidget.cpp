@@ -45,6 +45,7 @@
 #include <QPainterPath>
 #include <QPalette>
 #include <QPointer>
+#include <QRubberBand>
 #include <QProcess>
 #include <QPushButton>
 #include <QRadioButton>
@@ -2040,6 +2041,57 @@ void PdfViewerWidget::showInsertionContextMenu(int insertionIndex,
         insertPdfAt(insertionIndex);
 }
 
+void PdfViewerWidget::beginPageMarquee(const QPoint &containerPosition, Qt::KeyboardModifiers modifiers)
+{
+    const bool additive = modifiers.testFlag(Qt::ControlModifier)
+                          || modifiers.testFlag(Qt::MetaModifier)
+                          || modifiers.testFlag(Qt::ShiftModifier);
+    m_marqueeSelecting = true;
+    m_marqueeOrigin = containerPosition;
+    m_marqueeBase = additive ? m_selectedPages : QSet<int>{};
+    if (!additive) {
+        m_selectedPages.clear();
+        m_pageSelectionAnchor = -1;
+        updateSelectionOverlays();
+    }
+    if (!m_marquee)
+        m_marquee = new QRubberBand(QRubberBand::Rectangle, m_pagesContainer);
+    m_marquee->setGeometry(QRect(containerPosition, QSize()));
+    m_marquee->show();
+    m_pagesContainer->grabMouse();
+}
+
+void PdfViewerWidget::updatePageMarquee(const QPoint &containerPosition)
+{
+    if (!m_marqueeSelecting)
+        return;
+    const QRect band = QRect(m_marqueeOrigin, containerPosition).normalized();
+    if (m_marquee)
+        m_marquee->setGeometry(band);
+    QSet<int> next = m_marqueeBase;
+    for (int index = 0; index < m_pageLabels.size(); ++index) {
+        if (m_pageLabels[index]->geometry().intersects(band))
+            next.insert(index);
+    }
+    if (next != m_selectedPages) {
+        m_selectedPages = next;
+        if (!next.isEmpty())
+            m_pageSelectionAnchor = *std::min_element(next.cbegin(), next.cend());
+        updateSelectionOverlays();
+    }
+}
+
+void PdfViewerWidget::finishPageMarquee()
+{
+    if (!m_marqueeSelecting)
+        return;
+    m_marqueeSelecting = false;
+    if (m_marquee)
+        m_marquee->hide();
+    if (m_pagesContainer->mouseGrabber() == m_pagesContainer)
+        m_pagesContainer->releaseMouse();
+}
+
 void PdfViewerWidget::startSelectedPageDrag(QLabel *sourceLabel)
 {
     if (!sourceLabel || !m_organizePagesEnabled || m_selectedPages.isEmpty()
@@ -2562,19 +2614,49 @@ void PdfViewerWidget::commitObjectMove()
 }
 
 namespace {
+QString readableFontName(QString name)
+{
+    const int plus = name.indexOf(QLatin1Char('+'));
+    if (plus > 0 && plus <= 6)
+        name = name.mid(plus + 1);
+    return name;
+}
+
 QString familyForPdfFont(const QByteArray &fontData, const QString &fallback)
 {
+    const QString readable = readableFontName(fallback);
     if (fontData.isEmpty())
-        return fallback;
+        return readable;
     static QHash<QByteArray, QString> loadedFamilies;
     const auto found = loadedFamilies.constFind(fontData);
     if (found != loadedFamilies.cend())
         return found.value();
     const int id = QFontDatabase::addApplicationFontFromData(fontData);
     const QStringList families = QFontDatabase::applicationFontFamilies(id);
-    const QString family = families.isEmpty() ? fallback : families.first();
+    const QString family = families.isEmpty() ? readable : families.first();
     loadedFamilies.insert(fontData, family);
     return family;
+}
+
+QFont fontMatchingRun(const PdfPageObjectInfo &object)
+{
+    QFont font;
+    const QString family = familyForPdfFont(object.fontData, object.fontFamily);
+    if (!family.isEmpty())
+        font.setFamily(family);
+    // The embedded file is already the bold or italic cut. Adding weight on
+    // top asks Qt for a different face and the run no longer matches the page.
+    font.setWeight(QFont::Normal);
+    font.setItalic(false);
+    font.setStyleStrategy(QFont::NoFontMerging);
+    font.setPixelSize(qMax(1, object.fontPixelSize > 0 ? object.fontPixelSize
+                                                       : object.bounds.height()));
+    const int advance = QFontMetrics(font).horizontalAdvance(object.text);
+    if (advance > 4 && object.bounds.width() > 4) {
+        const int fitted = qRound(font.pixelSize() * (double(object.bounds.width()) / advance));
+        font.setPixelSize(qBound(1, fitted, 400));
+    }
+    return font;
 }
 
 QString encodeObjectPath(const QVector<int> &path)
@@ -2682,8 +2764,8 @@ void PdfViewerWidget::syncTextFormatBar()
     m_updatingTextFormat = true;
     if (m_fontCombo->count() == 0)
         m_fontCombo->addItems(QFontDatabase::families());
-    const QString family = object->fontFamily;
-    int familyIndex = m_fontCombo->findText(family);
+    const QString family = readableFontName(object->fontFamily);
+    int familyIndex = m_fontCombo->findText(family, Qt::MatchFixedString);
     if (familyIndex < 0 && !family.isEmpty()) {
         m_fontCombo->insertItem(0, family);
         familyIndex = 0;
@@ -2858,13 +2940,7 @@ void PdfViewerWidget::applyTextAlignment(int alignment)
     const PdfPageObjectInfo *object = selectedTextObject();
     if (!object || m_objectPageIndex < 0)
         return;
-    QFont font;
-    const QString embedded = familyForPdfFont(object->fontData, object->fontFamily);
-    if (!embedded.isEmpty())
-        font.setFamily(embedded);
-    font.setPixelSize(qMax(1, object->fontPixelSize));
-    font.setBold(object->fontWeight >= 600);
-    font.setItalic(object->italic);
+    const QFont font = fontMatchingRun(*object);
     const int textWidth = QFontMetrics(font).horizontalAdvance(object->text);
     int targetLeft = object->bounds.left();
     if (alignment == 1)
@@ -2933,22 +3009,16 @@ void PdfViewerWidget::editSelectedText()
     } else if (m_textEditor->parentWidget() != label) {
         m_textEditor->setParent(label);
     }
-    QFont font = m_textEditor->font();
-    const QString embeddedFamily = familyForPdfFont(object.fontData, object.fontFamily);
-    if (!embeddedFamily.isEmpty())
-        font.setFamily(embeddedFamily);
-    font.setPixelSize(qMax(1, object.fontPixelSize > 0 ? object.fontPixelSize
-                                                       : object.bounds.height()));
-    font.setWeight(static_cast<QFont::Weight>(qBound(1, object.fontWeight, 1000)));
-    font.setItalic(object.italic);
-    font.setStyleStrategy(QFont::PreferMatch);
+    const QFont font = fontMatchingRun(object);
     m_textEditor->setFont(font);
     m_textEditor->setFrame(false);
     m_textEditor->setTextMargins(0, 0, 0, 0);
     m_textEditor->setAlignment(Qt::AlignLeft);
+    const QString ink = object.color.name(QColor::HexArgb);
     m_textEditor->setStyleSheet(QStringLiteral(
-        "QLineEdit { border: none; padding: 0px; margin: 0px; background: rgba(255,255,255,210); color: %1; }")
-                                    .arg(object.color.name(QColor::HexArgb)));
+        "QLineEdit { border: none; padding: 0px; margin: 0px; background: transparent; color: %1;"
+        " selection-background-color: rgba(38, 132, 255, 45); selection-color: %1; }")
+                                    .arg(ink));
 
     const QFontMetrics metrics(font);
     const bool haveBaseline = object.fontPixelSize > 0;
@@ -3901,15 +3971,27 @@ bool PdfViewerWidget::eventFilter(QObject *watched, QEvent *event)
         }
     }
 
-    if (watched == m_pagesContainer && event->type() == QEvent::MouseButtonPress
-        && m_selectionMode == SelectionMode::Page) {
-        auto *mouseEvent = static_cast<QMouseEvent *>(event);
-        if (mouseEvent->button() == Qt::LeftButton && !m_selectedPages.isEmpty()) {
-            // A click that lands directly on the canvas (not on a page or a
-            // placeholder) is empty space: clear the selection.
-            m_selectedPages.clear();
-            m_pageSelectionAnchor = -1;
-            updateSelectionOverlays();
+    if (m_organizePagesEnabled && m_selectionMode == SelectionMode::Page
+        && (watched == m_pagesContainer || watched == m_scrollArea->viewport())) {
+        if (event->type() == QEvent::MouseButtonPress) {
+            auto *mouseEvent = static_cast<QMouseEvent *>(event);
+            if (mouseEvent->button() == Qt::LeftButton) {
+                const QPoint origin = m_pagesContainer->mapFrom(static_cast<QWidget *>(watched),
+                                                               mouseEvent->position().toPoint());
+                beginPageMarquee(origin, mouseEvent->modifiers());
+                return true;
+            }
+        }
+        if (event->type() == QEvent::MouseMove && m_marqueeSelecting) {
+            auto *mouseEvent = static_cast<QMouseEvent *>(event);
+            const QPoint position = m_pagesContainer->mapFrom(static_cast<QWidget *>(watched),
+                                                             mouseEvent->position().toPoint());
+            updatePageMarquee(position);
+            return true;
+        }
+        if (event->type() == QEvent::MouseButtonRelease && m_marqueeSelecting) {
+            finishPageMarquee();
+            return true;
         }
     }
 
