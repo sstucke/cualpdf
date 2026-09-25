@@ -11,6 +11,7 @@
 
 #include <QActionGroup>
 #include <QAbstractButton>
+#include <QButtonGroup>
 #include <QCoreApplication>
 #include <QCloseEvent>
 #include <QDateTime>
@@ -169,8 +170,40 @@ MainWindow::MainWindow(QWidget *parent)
     pageZoomWidget = makeZoomControl(
         pageZoomSlider, tr("Page zoom"), tr("Zoom out page"), tr("Zoom in page"), this);
 
+    const QColor layoutIconColor = palette().color(QPalette::Text);
+    pageLayoutWidget = new QWidget(this);
+    auto *pageLayoutRow = new QHBoxLayout(pageLayoutWidget);
+    pageLayoutRow->setContentsMargins(0, 0, 6, 0);
+    pageLayoutRow->setSpacing(2);
+    auto *layoutGroup = new QButtonGroup(pageLayoutWidget);
+    layoutGroup->setExclusive(true);
+    continuousLayoutButton = new QToolButton(pageLayoutWidget);
+    continuousLayoutButton->setCheckable(true);
+    continuousLayoutButton->setChecked(true);
+    continuousLayoutButton->setAutoRaise(true);
+    continuousLayoutButton->setIcon(viewModeIcon(true, layoutIconColor));
+    continuousLayoutButton->setToolTip(tr("Continuous scroll"));
+    discreteLayoutButton = new QToolButton(pageLayoutWidget);
+    discreteLayoutButton->setCheckable(true);
+    discreteLayoutButton->setAutoRaise(true);
+    discreteLayoutButton->setIcon(viewModeIcon(false, layoutIconColor));
+    discreteLayoutButton->setToolTip(tr("One page at a time"));
+    layoutGroup->addButton(continuousLayoutButton);
+    layoutGroup->addButton(discreteLayoutButton);
+    pageLayoutRow->addWidget(continuousLayoutButton);
+    pageLayoutRow->addWidget(discreteLayoutButton);
+    connect(continuousLayoutButton, &QToolButton::clicked, this, [this]() {
+        if (auto *viewer = qobject_cast<PdfViewerWidget *>(ui->tabWidget->currentWidget()))
+            viewer->setContinuousPageLayout(true);
+    });
+    connect(discreteLayoutButton, &QToolButton::clicked, this, [this]() {
+        if (auto *viewer = qobject_cast<PdfViewerWidget *>(ui->tabWidget->currentWidget()))
+            viewer->setContinuousPageLayout(false);
+    });
+
     ui->statusbar->addWidget(itemCountLabel);
     ui->statusbar->addPermanentWidget(thumbnailZoomWidget);
+    ui->statusbar->addPermanentWidget(pageLayoutWidget);
     ui->statusbar->addPermanentWidget(pageZoomWidget);
 
     ui->tabWidget->setTabsClosable(true);
@@ -678,6 +711,7 @@ void MainWindow::updateStatusBarForCurrentTab()
     const bool showingExplorer = currentWidget == ui->explorerTab;
 
     thumbnailZoomWidget->setVisible(showingExplorer);
+    pageLayoutWidget->setVisible(viewer != nullptr);
     pageZoomWidget->setVisible(viewer != nullptr);
     itemCountLabel->setVisible(showingExplorer);
     ui->actionZoomIn->setEnabled(showingExplorer);
@@ -706,6 +740,10 @@ void MainWindow::updateStatusBarForCurrentTab()
     if (viewer) {
         const QSignalBlocker blocker(pageZoomSlider);
         pageZoomSlider->setValue(viewer->zoomPercent());
+        const QSignalBlocker layoutBlocker(continuousLayoutButton);
+        const QSignalBlocker discreteBlocker(discreteLayoutButton);
+        continuousLayoutButton->setChecked(viewer->continuousPageLayout());
+        discreteLayoutButton->setChecked(!viewer->continuousPageLayout());
     }
 }
 
@@ -1082,6 +1120,11 @@ void MainWindow::openPdfViewerTab(const QString &filePath)
 
     auto *viewer = new PdfViewerWidget(filePath, kFullViewerPageWidth, ui->tabWidget);
     viewer->setProperty("filePath", filePath);
+    connect(viewer, &PdfViewerWidget::pageLayoutChanged, this,
+            [this, viewer]() {
+                if (ui->tabWidget->currentWidget() == viewer)
+                    updateStatusBarForCurrentTab();
+            });
     connect(viewer, &PdfViewerWidget::zoomPercentChanged, this,
             [this, viewer](int percent) {
                 if (ui->tabWidget->currentWidget() != viewer)

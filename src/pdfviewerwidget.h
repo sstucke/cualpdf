@@ -2,13 +2,17 @@
 
 #include "pdfdocument.h"
 
+#include <QColor>
 #include <QHash>
 #include <QRectF>
 #include <QSet>
 #include <QSizeF>
 #include <QString>
 #include <QVector>
+#include <QIcon>
 #include <QWidget>
+
+QIcon viewModeIcon(bool continuous, const QColor &color);
 
 #include <memory>
 
@@ -57,10 +61,12 @@ public:
     {
         return m_zoomMode == ZoomMode::Custom ? m_zoomPercent : m_effectiveZoomPercent;
     }
+    bool continuousPageLayout() const;
 
 public slots:
     void goToPage(int pageIndex);
     void setZoomPercent(int percent);
+    void setContinuousPageLayout(bool continuous);
     void printDocument();
     void saveDocument(bool createTimestampedBackup, int backupVersionLimit);
     void undo();
@@ -71,6 +77,7 @@ signals:
     void documentLoaded(bool valid, int pageCount);
     void currentPageChanged(int pageIndex);
     void zoomPercentChanged(int percent);
+    void pageLayoutChanged(bool continuous);
     void modifiedChanged(bool modified);
     void operationInProgressChanged(bool inProgress);
     void saveFinished(bool success, const QString &errorMessage);

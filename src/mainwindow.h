@@ -14,6 +14,7 @@ class QLabel;
 class QListWidgetItem;
 class QSlider;
 class QTimer;
+class QToolButton;
 class QWidget;
 class QModelIndex;
 class QPoint;
@@ -104,6 +105,9 @@ private:
     QWidget *thumbnailZoomWidget = nullptr;
     QSlider *pageZoomSlider = nullptr;
     QWidget *pageZoomWidget = nullptr;
+    QWidget *pageLayoutWidget = nullptr;
+    QToolButton *continuousLayoutButton = nullptr;
+    QToolButton *discreteLayoutButton = nullptr;
     QActionGroup *viewModeActionGroup = nullptr;
     QActionGroup *sortActionGroup = nullptr;
     QAction *m_saveAction = nullptr;

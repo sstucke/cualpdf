@@ -225,30 +225,6 @@ constexpr std::array<int, 13> kZoomSteps = {
     10, 25, 33, 50, 67, 75, 100, 125, 150, 200, 250, 300, 400,
 };
 
-QIcon viewModeIcon(bool continuous, const QColor &color)
-{
-    QPixmap pixmap(26, 20);
-    pixmap.fill(Qt::transparent);
-    QPainter painter(&pixmap);
-    painter.setRenderHint(QPainter::Antialiasing);
-    painter.setPen(QPen(color, 1.4));
-    painter.setBrush(Qt::NoBrush);
-
-    if (continuous) {
-        painter.drawRoundedRect(QRectF(2.5, 1.5, 14, 5), 1, 1);
-        painter.drawRoundedRect(QRectF(2.5, 7.5, 14, 5), 1, 1);
-        painter.drawRoundedRect(QRectF(2.5, 13.5, 14, 5), 1, 1);
-        painter.drawLine(QPointF(21, 3), QPointF(21, 17));
-        painter.drawLine(QPointF(18.5, 14.5), QPointF(21, 17));
-        painter.drawLine(QPointF(23.5, 14.5), QPointF(21, 17));
-    } else {
-        painter.drawRoundedRect(QRectF(1.5, 1.5, 23, 17), 2, 2);
-        painter.drawRect(QRectF(5, 4, 7, 12));
-        painter.drawRect(QRectF(14, 4, 7, 12));
-    }
-    return QIcon(pixmap);
-}
-
 QIcon fitModeIcon(int mode, const QColor &color)
 {
     QPixmap pixmap(26, 20);
@@ -848,6 +824,29 @@ private:
     QVector<int> m_guideXs;
     QVector<int> m_guideYs;
 };
+}
+
+QIcon viewModeIcon(bool continuous, const QColor &color)
+{
+    QPixmap pixmap(26, 20);
+    pixmap.fill(Qt::transparent);
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setPen(QPen(color, 1.4));
+    painter.setBrush(Qt::NoBrush);
+
+    if (continuous) {
+        painter.drawRoundedRect(QRectF(2.5, 1.5, 14, 5), 1, 1);
+        painter.drawRoundedRect(QRectF(2.5, 7.5, 14, 5), 1, 1);
+        painter.drawRoundedRect(QRectF(2.5, 13.5, 14, 5), 1, 1);
+        painter.drawLine(QPointF(21, 3), QPointF(21, 17));
+        painter.drawLine(QPointF(18.5, 14.5), QPointF(21, 17));
+        painter.drawLine(QPointF(23.5, 14.5), QPointF(21, 17));
+    } else {
+        // One sheet, the single-page glyph Acrobat and Foxit use in the footer.
+        painter.drawRoundedRect(QRectF(6.5, 1.5, 13, 17), 1.2, 1.2);
+    }
+    return QIcon(pixmap);
 }
 
 PdfViewerWidget::PdfViewerWidget(const QString &filePath, int pageRenderWidth,
@@ -1659,14 +1658,27 @@ int PdfViewerWidget::discreteChunkStart() const
     return qMax(0, (m_currentPageIndex / count) * count);
 }
 
+bool PdfViewerWidget::continuousPageLayout() const
+{
+    return m_pageLayout == PageLayout::Continuous;
+}
+
+void PdfViewerWidget::setContinuousPageLayout(bool continuous)
+{
+    setPageLayout(continuous ? PageLayout::Continuous : PageLayout::Discrete);
+}
+
 void PdfViewerWidget::setPageLayout(PageLayout layout)
 {
-    if (!m_valid || m_pageLayout == layout)
+    if (m_pageLayout == layout)
         return;
 
     m_pageLayout = layout;
-
-    applyZoom();
+    if (m_valid)
+        applyZoom();
+    else
+        syncViewControl();
+    emit pageLayoutChanged(layout == PageLayout::Continuous);
 }
 
 void PdfViewerWidget::applyZoom()

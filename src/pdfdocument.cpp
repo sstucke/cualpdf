@@ -222,13 +222,10 @@ QSizeF PdfDocument::pageSizePoints(int pageIndex) const
         return {};
 
     const QMutexLocker locker(&pdfiumMutex());
-    const FPDF_PAGE page = FPDF_LoadPage(static_cast<FPDF_DOCUMENT>(m_document), pageIndex);
-    if (!page)
+    FS_SIZEF size = {};
+    if (!FPDF_GetPageSizeByIndexF(static_cast<FPDF_DOCUMENT>(m_document), pageIndex, &size))
         return {};
-
-    const QSizeF size(FPDF_GetPageWidthF(page), FPDF_GetPageHeightF(page));
-    FPDF_ClosePage(page);
-    return size;
+    return QSizeF(size.width, size.height);
 }
 
 QVector<QSizeF> PdfDocument::allPageSizes() const
@@ -240,20 +237,17 @@ QVector<QSizeF> PdfDocument::allPageSizes() const
     const auto doc = static_cast<FPDF_DOCUMENT>(m_document);
     const int count = FPDF_GetPageCount(doc);
 
+    // Page-dictionary lookup. FPDF_LoadPage parses the page and is what made
+    // opening a long document stall before the first paint. Rotation is
+    // included; a mismatch with the rendered bitmap is corrected later.
     QVector<QSizeF> sizes;
     sizes.reserve(count);
     for (int i = 0; i < count; ++i) {
-        const FPDF_PAGE page = FPDF_LoadPage(doc, i);
-        if (!page) {
+        FS_SIZEF size = {};
+        if (!FPDF_GetPageSizeByIndexF(doc, i, &size) || size.width <= 0.0 || size.height <= 0.0)
             sizes.append(QSizeF(595, 842)); // A4 fallback
-            continue;
-        }
-
-        const QSizeF size(FPDF_GetPageWidthF(page), FPDF_GetPageHeightF(page));
-        FPDF_ClosePage(page);
-        sizes.append(size.width() > 0.0 && size.height() > 0.0
-                         ? size
-                         : QSizeF(595, 842));
+        else
+            sizes.append(QSizeF(size.width, size.height));
     }
     return sizes;
 }
