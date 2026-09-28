@@ -68,6 +68,10 @@ Configuring the CMake build also sets that path. Direct pushes to `main` are blo
 
 ## 🛠️ Built With
 
+Editable, offline OCR bundles its engine, fonts and seven language models with
+the application. See [OCR usage, distribution and contribution notes](docs/OCR.md)
+for the review workflow, supported languages and current limitations.
+
 * **Language:** C++
 * **UI & Core Framework:** Qt 6
 * **PDF Rendering Engine:** PDFium

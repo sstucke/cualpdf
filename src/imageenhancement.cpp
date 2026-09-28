@@ -90,11 +90,18 @@ int clampAmount(int amount)
 
 QImage aclararPapel(const QImage &page, int amount)
 {
-    amount = clampAmount(amount);
-    if (amount <= 0 || page.isNull())
+    return aclararPapel(page, amount, amount);
+}
+
+QImage aclararPapel(const QImage &page, int paperAmount, int textAmount)
+{
+    paperAmount = clampAmount(paperAmount);
+    textAmount = clampAmount(textAmount);
+    if ((paperAmount <= 0 && textAmount <= 0) || page.isNull())
         return page;
 
-    const double strength = amount / 100.0;
+    const double paperStrength = paperAmount / 100.0;
+    const double textStrength = textAmount / 100.0;
     const cv::Mat source = qImageToBgrMat(page);
 
     cv::Mat lab;
@@ -134,18 +141,18 @@ QImage aclararPapel(const QImage &page, int amount)
     }
 
     cv::Mat boosted;
-    flattenedF.convertTo(boosted, CV_8U, 1.0 + 0.12 * strength,
-                         10.0 + 30.0 * strength);
+    flattenedF.convertTo(boosted, CV_8U, 1.0 + 0.20 * textStrength,
+                         10.0 + 30.0 * paperStrength);
 
     const cv::Ptr<cv::CLAHE> clahe =
-        cv::createCLAHE(1.0 + 1.4 * strength, cv::Size(8, 8));
+        cv::createCLAHE(1.0 + 1.8 * textStrength, cv::Size(8, 8));
     cv::Mat local;
     clahe->apply(boosted, local);
 
     cv::Mat targetLightness;
     cv::addWeighted(boosted, 0.72, local, 0.28, 0.0, targetLightness);
 
-    const double chromaKeep = 1.0 - 0.45 * strength;
+    const double chromaKeep = 1.0 - 0.45 * paperStrength;
     const std::array<cv::Mat, 3> targetChannels{
         targetLightness,
         desaturateChannel(aChannel, chromaKeep),
@@ -157,9 +164,24 @@ QImage aclararPapel(const QImage &page, int amount)
     cv::cvtColor(targetLab, targetBgr, cv::COLOR_Lab2BGR);
 
     cv::Mat result;
-    cv::addWeighted(source, 1.0 - strength, targetBgr, strength, 0.0, result);
+    const double blend = std::max(paperStrength, textStrength);
+    cv::addWeighted(source, 1.0 - blend, targetBgr, blend, 0.0, result);
 
     return bgrMatToQImage(result);
+}
+
+QPair<int, int> ajustesAclaradoAutomatico(const QImage &page)
+{
+    if (page.isNull())
+        return {};
+    cv::Mat gray;
+    cv::cvtColor(qImageToBgrMat(page), gray, cv::COLOR_BGR2GRAY);
+    cv::Scalar mean;
+    cv::Scalar deviation;
+    cv::meanStdDev(gray, mean, deviation);
+    const int paper = std::clamp(qRound((220.0 - mean[0]) * 0.9), 18, 85);
+    const int text = std::clamp(qRound(58.0 - deviation[0] * 0.55), 15, 75);
+    return {paper, text};
 }
 
 QImage invertirColores(const QImage &page)
@@ -205,6 +227,35 @@ QMargins blackBorderMargins(const QImage &page)
     if (top + bottom + left + right < 4)
         return {};
     return QMargins(left, top, right, bottom);
+}
+
+QMargins whitePaperMargins(const QImage &page)
+{
+    const QImage image = page.convertToFormat(QImage::Format_RGB32);
+    if (image.width() < 8 || image.height() < 8)
+        return {};
+    const auto rowHasInk = [&](int y) {
+        int ink = 0;
+        for (int x = 0; x < image.width(); x += 2)
+            ink += qGray(image.pixel(x, y)) < 242;
+        return ink >= std::max(2, image.width() / 160);
+    };
+    const auto columnHasInk = [&](int x) {
+        int ink = 0;
+        for (int y = 0; y < image.height(); y += 2)
+            ink += qGray(image.pixel(x, y)) < 242;
+        return ink >= std::max(2, image.height() / 160);
+    };
+    int top = 0, bottom = 0, left = 0, right = 0;
+    while (top < image.height() / 3 && !rowHasInk(top)) ++top;
+    while (bottom < image.height() / 3 && !rowHasInk(image.height() - 1 - bottom)) ++bottom;
+    while (left < image.width() / 3 && !columnHasInk(left)) ++left;
+    while (right < image.width() / 3 && !columnHasInk(image.width() - 1 - right)) ++right;
+    if (top + bottom + left + right < 4)
+        return {};
+    constexpr int padding = 2;
+    return QMargins(std::max(0, left - padding), std::max(0, top - padding),
+                    std::max(0, right - padding), std::max(0, bottom - padding));
 }
 
 QImage mejorarEscaneo(const QImage &page, int level, bool whiteBackground, bool blackText,
@@ -264,7 +315,8 @@ QImage mejorarEscaneo(const QImage &page, int level, bool whiteBackground, bool 
     return bgrMatToQImage(bgr);
 }
 
-QImage corregirPerspectiva(const QImage &page, const QVector<QPointF> &corners)
+QImage corregirPerspectiva(const QImage &page, const QVector<QPointF> &corners,
+                           double targetRatio)
 {
     if (page.isNull() || corners.size() != 4)
         return {};
@@ -279,8 +331,13 @@ QImage corregirPerspectiva(const QImage &page, const QVector<QPointF> &corners)
     const double bottom = cv::norm(src[2] - src[3]);
     const double left = cv::norm(src[3] - src[0]);
     const double right = cv::norm(src[2] - src[1]);
-    const int width = std::max(2, int(std::max(top, bottom)));
-    const int height = std::max(2, int(std::max(left, right)));
+    int width = std::max(2, int(std::max(top, bottom)));
+    int height = std::max(2, int(std::max(left, right)));
+    if (targetRatio > 0.0) {
+        const double area = std::max(4.0, double(width) * height);
+        width = std::max(2, qRound(std::sqrt(area * targetRatio)));
+        height = std::max(2, qRound(width / targetRatio));
+    }
     const cv::Point2f dst[4] = {
         {0, 0}, {float(width - 1), 0}, {float(width - 1), float(height - 1)}, {0, float(height - 1)},
     };

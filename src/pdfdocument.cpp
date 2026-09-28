@@ -1,4 +1,5 @@
 #include "pdfdocument.h"
+#include "ocrengine.h"
 
 #include <fpdfview.h>
 #include <fpdf_annot.h>
@@ -10,6 +11,8 @@
 
 #include <QByteArray>
 #include <QBuffer>
+#include <QCoreApplication>
+#include <QHash>
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
@@ -199,6 +202,12 @@ PdfDocument::PdfDocument(const QString &filePath)
     if (!m_document)
         qWarning() << "PDFium failed to load:" << filePath
                    << "(error" << FPDF_GetLastError() << ")";
+}
+
+PdfDocument::PdfDocument(const QByteArray &archive) : m_memoryData(archive)
+{
+    const QMutexLocker locker(&pdfiumMutex());
+    m_document = FPDF_LoadMemDocument64(m_memoryData.constData(), m_memoryData.size(), nullptr);
 }
 
 PdfDocument::~PdfDocument()
@@ -1083,7 +1092,7 @@ int shrinkContainer(FPDF_PAGE page, FPDF_PAGEOBJECT form, int count, bool isForm
 }
 }
 
-int PdfDocument::compressImages()
+int PdfDocument::compressImages(const std::function<bool(int, int)> &progress)
 {
     if (!m_document)
         return 0;
@@ -1092,6 +1101,8 @@ int PdfDocument::compressImages()
     const int pageCount = FPDF_GetPageCount(document);
     int changed = 0;
     for (int pageIndex = 0; pageIndex < pageCount; ++pageIndex) {
+        if (progress && !progress(pageIndex, pageCount))
+            break;
         const FPDF_PAGE page = FPDF_LoadPage(document, pageIndex);
         if (!page)
             continue;
@@ -1101,6 +1112,8 @@ int PdfDocument::compressImages()
         changed += count;
         FPDF_ClosePage(page);
     }
+    if (progress)
+        progress(pageCount, pageCount);
     return changed;
 }
 
@@ -1220,6 +1233,55 @@ QByteArray PdfDocument::exportPages(const QVector<int> &pageIndexes) const
     return archive;
 }
 
+QByteArray PdfDocument::exportSplitPages(const QVector<int> &pageIndexes,
+                                         const std::function<bool(int, int)> &progress) const
+{
+    if (!m_document || pageIndexes.isEmpty())
+        return {};
+    const QMutexLocker locker(&pdfiumMutex());
+    const auto source = static_cast<FPDF_DOCUMENT>(m_document);
+    const int sourceCount = FPDF_GetPageCount(source);
+    const FPDF_DOCUMENT archive = FPDF_CreateNewDocument();
+    if (!archive)
+        return {};
+    bool ok = true;
+    int outputIndex = 0;
+    int completed = 0;
+    for (const int sourceIndex : pageIndexes) {
+        if (progress && !progress(completed, pageIndexes.size())) { ok = false; break; }
+        if (sourceIndex < 0 || sourceIndex >= sourceCount) { ok = false; break; }
+        for (int half = 0; half < 2 && ok; ++half) {
+            ok = FPDF_ImportPagesByIndex(archive, source, &sourceIndex, 1, outputIndex);
+            if (!ok)
+                break;
+            const FPDF_PAGE page = FPDF_LoadPage(archive, outputIndex);
+            if (!page) { ok = false; break; }
+            const double width = FPDF_GetPageWidthF(page);
+            const double height = FPDF_GetPageHeightF(page);
+            constexpr int deviceWidth = 100000;
+            const int deviceHeight = qMax(1, qRound(deviceWidth * height / width));
+            const int x0 = half == 0 ? 0 : deviceWidth / 2;
+            const int x1 = half == 0 ? deviceWidth / 2 : deviceWidth;
+            double ax = 0, ay = 0, bx = 0, by = 0;
+            ok = FPDF_DeviceToPage(page, 0, 0, deviceWidth, deviceHeight, 0,
+                                   x0, 0, &ax, &ay)
+                 && FPDF_DeviceToPage(page, 0, 0, deviceWidth, deviceHeight, 0,
+                                      x1, deviceHeight, &bx, &by);
+            if (ok)
+                FPDFPage_SetCropBox(page, float(qMin(ax, bx)), float(qMin(ay, by)),
+                                    float(qMax(ax, bx)), float(qMax(ay, by)));
+            FPDF_ClosePage(page);
+            ++outputIndex;
+        }
+        ++completed;
+    }
+    if (ok && progress)
+        ok = progress(completed, pageIndexes.size());
+    const QByteArray result = ok ? serializeDocument(archive) : QByteArray();
+    FPDF_CloseDocument(archive);
+    return result;
+}
+
 QByteArray PdfDocument::createBlankPageArchive(const QSizeF &pageSize)
 {
     if (pageSize.width() <= 0.0 || pageSize.height() <= 0.0)
@@ -1305,6 +1367,128 @@ QByteArray PdfDocument::createImagePagesArchive(const QVector<QImage> &images,
     const QByteArray archive = wroteEveryPage ? serializeDocument(archiveDocument) : QByteArray();
     FPDF_CloseDocument(archiveDocument);
     return archive;
+}
+
+QByteArray PdfDocument::createOcrPagesArchive(const QVector<OcrPage> &pages, QString *error)
+{
+    if (error) error->clear();
+    QVector<QImage> backgrounds;
+    QVector<QSizeF> sizes;
+    for (const auto &page : pages) {
+        backgrounds.append(page.background);
+        sizes.append(page.pageSize);
+    }
+    const QByteArray base = createImagePagesArchive(backgrounds, sizes);
+    if (base.isEmpty()) return {};
+    const QMutexLocker locker(&pdfiumMutex());
+    const FPDF_DOCUMENT document = FPDF_LoadMemDocument64(base.constData(), base.size(), nullptr);
+    if (!document) return {};
+    QHash<QByteArray, FPDF_FONT> fonts;
+    bool ok = true;
+    for (int index = 0; ok && index < pages.size(); ++index) {
+        const auto &input = pages[index];
+        const FPDF_PAGE page = FPDF_LoadPage(document, index);
+        if (!page) { ok = false; break; }
+        for (const auto &run : input.runs) {
+            if (!run.accepted || run.text.trimmed().isEmpty()) continue;
+            if (run.fontData.isEmpty() || input.source.isNull()) { ok = false; break; }
+            FPDF_FONT font = fonts.value(run.fontData, nullptr);
+            if (!font) {
+                font = FPDFText_LoadFont(document,
+                    reinterpret_cast<const uint8_t *>(run.fontData.constData()),
+                    uint32_t(run.fontData.size()), FPDF_FONT_TRUETYPE, /*cid=*/true);
+                if (!font) { ok = false; break; }
+                fonts.insert(run.fontData, font);
+            }
+            const float points = qMax(1.0, run.bounds.height() * input.pageSize.height()
+                                                  / input.source.height());
+            const FPDF_PAGEOBJECT text = FPDFPageObj_CreateTextObj(document, font, points);
+            float left = 0, bottom = 0, right = 0, top = 0;
+            bool created = text
+                && FPDFText_SetText(text, reinterpret_cast<FPDF_WIDESTRING>(run.text.utf16()))
+                && FPDFPageObj_GetBounds(text, &left, &bottom, &right, &top)
+                && right > left && top > bottom;
+            if (created) {
+                const double px = input.pageSize.width() / input.source.width();
+                const double py = input.pageSize.height() / input.source.height();
+                const double sx = run.bounds.width() * px / (right - left);
+                const double sy = run.bounds.height() * py / (top - bottom);
+                const double x = run.bounds.x() * px;
+                const double y = input.pageSize.height() - (run.bounds.y() + run.bounds.height()) * py;
+                const FS_MATRIX matrix{float(sx), 0, 0, float(sy), float(x - left * sx), float(y - bottom * sy)};
+                created = FPDFPageObj_SetMatrix(text, &matrix)
+                    && FPDFPageObj_SetFillColor(text, run.color.red(), run.color.green(), run.color.blue(), 255)
+                    && FPDFPage_InsertObject(page, text);
+            }
+            if (!created) {
+                if (text) FPDFPageObj_Destroy(text);
+                ok = false; break;
+            }
+        }
+        ok = ok && FPDFPage_GenerateContent(page);
+        FPDF_ClosePage(page);
+    }
+    const QByteArray output = ok ? serializeDocument(document) : QByteArray();
+    for (const auto font : fonts) FPDFFont_Close(font);
+    FPDF_CloseDocument(document);
+    if (output.isEmpty() && error)
+        *error = QCoreApplication::translate("PdfDocument", "The editable OCR page could not be created.");
+    return output;
+}
+
+QByteArray PdfDocument::exportEditedObjectPage(int pageIndex, const QVector<int> &objectPath,
+                                               bool removeObject, const QRectF &imageCrop) const
+{
+    if (objectPath.size() != 1) return {};
+    const QByteArray base = exportPages({pageIndex});
+    if (base.isEmpty()) return {};
+    const QMutexLocker locker(&pdfiumMutex());
+    const FPDF_DOCUMENT document = FPDF_LoadMemDocument64(base.constData(), base.size(), nullptr);
+    if (!document) return {};
+    const FPDF_PAGE page = FPDF_LoadPage(document, 0);
+    const FPDF_PAGEOBJECT object = pageObjectAt(page, objectPath);
+    bool ok = object != nullptr;
+    if (ok && removeObject) {
+        ok = FPDFPage_RemoveObject(page, object);
+        if (ok) FPDFPageObj_Destroy(object);
+    } else if (ok && FPDFPageObj_GetType(object) == FPDF_PAGEOBJ_IMAGE
+               && !imageCrop.isEmpty() && QRectF(0, 0, 1, 1).contains(imageCrop)) {
+        const FPDF_BITMAP original = FPDFImageObj_GetBitmap(object);
+        const QImage image = bitmapToImage(original);
+        if (original) FPDFBitmap_Destroy(original);
+        const QRect pixels(qRound(imageCrop.x() * image.width()), qRound(imageCrop.y() * image.height()),
+                           qRound(imageCrop.width() * image.width()), qRound(imageCrop.height() * image.height()));
+        const QRect clipped = pixels.intersected(image.rect());
+        const QImage crop = image.copy(clipped).convertToFormat(QImage::Format_ARGB32);
+        FS_MATRIX matrix;
+        ok = !clipped.isEmpty() && !crop.isNull() && FPDFPageObj_GetMatrix(object, &matrix);
+        const FPDF_BITMAP bitmap = ok ? FPDFBitmap_Create(crop.width(), crop.height(), 1) : nullptr;
+        ok = ok && bitmap;
+        if (ok) {
+            auto *buffer = static_cast<uchar *>(FPDFBitmap_GetBuffer(bitmap));
+            const int stride = FPDFBitmap_GetStride(bitmap);
+            for (int y = 0; y < crop.height(); ++y)
+                memcpy(buffer + y * stride, crop.constScanLine(y), crop.width() * 4);
+            const double x = double(clipped.x()) / image.width();
+            const double y = 1.0 - double(clipped.y() + clipped.height()) / image.height();
+            const double w = double(clipped.width()) / image.width();
+            const double h = double(clipped.height()) / image.height();
+            const FS_MATRIX cropped{float(matrix.a * w), float(matrix.b * w),
+                float(matrix.c * h), float(matrix.d * h),
+                float(matrix.e + matrix.a * x + matrix.c * y),
+                float(matrix.f + matrix.b * x + matrix.d * y)};
+            ok = FPDFImageObj_SetBitmap(nullptr, 0, object, bitmap)
+                 && FPDFPageObj_SetMatrix(object, &cropped);
+        }
+        if (bitmap) FPDFBitmap_Destroy(bitmap);
+    } else {
+        ok = false;
+    }
+    ok = ok && FPDFPage_GenerateContent(page);
+    if (page) FPDF_ClosePage(page);
+    const QByteArray output = ok ? serializeDocument(document) : QByteArray();
+    FPDF_CloseDocument(document);
+    return output;
 }
 
 bool PdfDocument::mergeFiles(const QStringList &inputPaths, const QString &outputPath,
