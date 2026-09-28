@@ -92,6 +92,28 @@ int main(int argc, char *argv[])
                                         || !sizesMatch(exportedDocument.allPageSizes(),
                                                        {thirdSize, secondSize})) {
                                         result = 11;
+                                    } else {
+                                        int progressCalls = 0;
+                                        const QByteArray split = exportedDocument.exportSplitPages(
+                                            {0}, [&progressCalls](int, int) {
+                                                ++progressCalls;
+                                                return true;
+                                            });
+                                        const QString splitPath = temporaryDirectory.filePath(
+                                            QStringLiteral("split.pdf"));
+                                        if (split.isEmpty() || progressCalls < 2
+                                            || !writeArchive(splitPath, split)) {
+                                            result = 16;
+                                        } else {
+                                            PdfDocument splitDocument(splitPath);
+                                            const QSizeF half(thirdSize.width() / 2.0,
+                                                              thirdSize.height());
+                                            if (!splitDocument.isValid()
+                                                || !sizesMatch(splitDocument.allPageSizes(),
+                                                               {half, half})) {
+                                                result = 17;
+                                            }
+                                        }
                                     }
                                 }
                             }

@@ -12,6 +12,8 @@ int clampAmount(int amount);
 // local/global contrast, without converting the page to pure black & white.
 // `amount` ranges 0 (no change, returns `page` as-is) to 100 (full effect).
 QImage aclararPapel(const QImage &page, int amount);
+QImage aclararPapel(const QImage &page, int paperAmount, int textAmount);
+QPair<int, int> ajustesAclaradoAutomatico(const QImage &page);
 
 QImage invertirColores(const QImage &page);
 
@@ -19,11 +21,16 @@ QImage invertirColores(const QImage &page);
 // page has no such border or the crop would erase the content.
 QMargins blackBorderMargins(const QImage &page);
 
+// Margins around a predominantly white paper background. Unlike
+// blackBorderMargins(), this finds the first rows/columns containing ink.
+QMargins whitePaperMargins(const QImage &page);
+
 // level is 0 (gentle) through 6 (strong), matching CopyFlow's scan cleanup.
 QImage mejorarEscaneo(const QImage &page, int level, bool whiteBackground, bool blackText,
                       bool blackAndWhite);
 
 // Four corners in image pixels: top-left, top-right, bottom-right, bottom-left.
-QImage corregirPerspectiva(const QImage &page, const QVector<QPointF> &corners);
+QImage corregirPerspectiva(const QImage &page, const QVector<QPointF> &corners,
+                           double targetRatio = 0.0);
 
 } // namespace ImageEnhancement

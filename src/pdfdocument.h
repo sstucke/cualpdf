@@ -11,6 +11,10 @@
 #include <QStringList>
 #include <QVector>
 
+#include <functional>
+
+struct OcrPage;
+
 enum class PdfMarkupPrint {
     Document,
     Markups,
@@ -63,6 +67,7 @@ public:
     static void shutdownLibrary();
 
     explicit PdfDocument(const QString &filePath);
+    explicit PdfDocument(const QByteArray &archive);
     ~PdfDocument();
 
     PdfDocument(const PdfDocument &) = delete;
@@ -104,11 +109,13 @@ public:
     bool rotatePages(const QVector<int> &pageIndexes, bool clockwise);
     bool resetPageView(const QVector<int> &pageIndexes);
     // Shrinks embedded images that are larger than about 200 dpi on the page.
-    int compressImages();
+    int compressImages(const std::function<bool(int, int)> &progress = {});
     bool cropPages(const QVector<int> &pageIndexes, const QMarginsF &marginsPoints);
     QVector<PdfPageState> pageStates(const QVector<int> &pageIndexes) const;
     bool restorePageStates(const QVector<PdfPageState> &states);
     QByteArray exportPages(const QVector<int> &pageIndexes) const;
+    QByteArray exportSplitPages(const QVector<int> &pageIndexes,
+                                const std::function<bool(int, int)> &progress = {}) const;
     static QByteArray createBlankPageArchive(const QSizeF &pageSize);
     // Builds a single-page PDF archive whose page is `pageSize` (points) and
     // whose entire content is `image`, scaled to fill it. Used to swap a
@@ -117,6 +124,10 @@ public:
     static QByteArray createImagePageArchive(const QImage &image, const QSizeF &pageSize);
     static QByteArray createImagePagesArchive(const QVector<QImage> &images,
                                               const QVector<QSizeF> &pageSizes);
+    static QByteArray createOcrPagesArchive(const QVector<OcrPage> &pages, QString *error = nullptr);
+    // Works on a detached page archive so delete/crop can use structural undo.
+    QByteArray exportEditedObjectPage(int pageIndex, const QVector<int> &objectPath,
+                                      bool removeObject, const QRectF &imageCrop = {}) const;
     static bool mergeFiles(const QStringList &inputPaths, const QString &outputPath,
                            QString *failedInputPath, QString *fileErrorMessage);
     bool restorePageStructure(const QVector<quint64> &currentPageIds,

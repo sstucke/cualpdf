@@ -608,6 +608,42 @@
 </context>
 <context>
     <name>PdfViewerWidget</name>
+    <message><source>OCR…</source><translation>OCR…</translation></message>
+    <message><source>Convert a scan into editable text and a separate background</source><translation>Convertir un escaneo en texto editable y un fondo separado</translation></message>
+    <message><source>OCR — editable text and background</source><translation>OCR: texto editable y fondo</translation></message>
+    <message><source>Choose the languages used in the document. OCR runs locally. The original pages remain available through Undo until the document is closed.</source><translation>Elegí los idiomas del documento. El OCR se ejecuta localmente. Las páginas originales se pueden recuperar con Deshacer hasta cerrar el documento.</translation></message>
+    <message><source>Conversion rebuilds the selected pages: links, forms and other interactive content are not preserved. Save a separate copy of important originals.</source><translation>La conversión reconstruye las páginas elegidas: no se conservan enlaces, formularios ni otros contenidos interactivos. Guardá una copia separada de los originales importantes.</translation></message>
+    <message><source>Current page</source><translation>Página actual</translation></message>
+    <message><source>Selected pages</source><translation>Páginas seleccionadas</translation></message>
+    <message><source>All pages</source><translation>Todas las páginas</translation></message>
+    <message><source>Add language pack…</source><translation>Añadir paquete de idioma…</translation></message>
+    <message><source>Add OCR language</source><translation>Añadir idioma de OCR</translation></message>
+    <message><source>Tesseract models (*.traineddata)</source><translation>Modelos Tesseract (*.traineddata)</translation></message>
+    <message><source>The language could not be added, or already exists.</source><translation>No se pudo añadir el idioma o ya existe.</translation></message>
+    <message><source>Reprocess pages that already contain text</source><translation>Reprocesar páginas que ya contienen texto</translation></message>
+    <message><source>OCR licenses…</source><translation>Licencias OCR…</translation></message>
+    <message><source>OCR licenses</source><translation>Licencias OCR</translation></message>
+    <message><source>Recognize and review</source><translation>Reconocer y revisar</translation></message>
+    <message><source>Select at least one language.</source><translation>Seleccioná al menos un idioma.</translation></message>
+    <message><source>Recognizing text…</source><translation>Reconociendo texto…</translation></message>
+    <message><source>This selection is too large for an OCR batch. Select fewer pages (up to 80 megapixels per batch).</source><translation>La selección es demasiado grande para un lote de OCR. Seleccioná menos páginas (hasta 80 megapíxeles por lote).</translation></message>
+    <message><source>No new text was found. Pages with existing text are skipped unless reprocessing is enabled.</source><translation>No se encontró texto nuevo. Las páginas con texto existente se omiten salvo que se active el reprocesamiento.</translation></message>
+    <message><source>Review editable OCR — %1 pages skipped</source><translation>Revisar OCR editable: %1 páginas omitidas</translation></message>
+    <message><source>Building editable pages…</source><translation>Construyendo páginas editables…</translation></message>
+    <message><source>OCR reconstruction failed.</source><translation>Falló la reconstrucción del OCR.</translation></message>
+    <message><source>Editable OCR</source><translation>OCR editable</translation></message>
+    <message><source>Edit object</source><translation>Editar objeto</translation></message>
+    <message><source>This object is inside a grouped form and cannot be removed or cropped individually.</source><translation>Este objeto está dentro de un grupo y no se puede eliminar o recortar individualmente.</translation></message>
+    <message><source>Crop image without moving text</source><translation>Recortar imagen sin mover el texto</translation></message>
+    <message><source>Crop image without moving text…</source><translation>Recortar imagen sin mover el texto…</translation></message>
+    <message><source>Left (%)</source><translation>Izquierda (%)</translation></message>
+    <message><source>Top (%)</source><translation>Arriba (%)</translation></message>
+    <message><source>Right (%)</source><translation>Derecha (%)</translation></message>
+    <message><source>Bottom (%)</source><translation>Abajo (%)</translation></message>
+    <message><source>Delete object</source><translation>Eliminar objeto</translation></message>
+    <message><source>Crop image</source><translation>Recortar imagen</translation></message>
+    <message><source>The object could not be changed.</source><translation>No se pudo modificar el objeto.</translation></message>
+    <message><source>Edit Text…</source><translation>Editar texto…</translation></message>
     <message>
         <source>Insert pages here</source>
         <translation>Insertar páginas aquí</translation>
@@ -1461,5 +1497,40 @@
         <source>Page rotation applies to every page currently selected.</source>
         <translation>La rotación se aplica a todas las páginas seleccionadas actualmente.</translation>
     </message>
+</context>
+<context>
+    <name>OcrReviewDialog</name>
+    <message><source>Review editable OCR</source><translation>Revisar OCR editable</translation></message>
+    <message><source>Review the text and proposed fonts. Unchecked lines remain in the original image. Accepted lines become independent editable text boxes. Font matching and background repair are approximations.</source><translation>Revisá el texto y las fuentes propuestas. Las líneas desmarcadas quedan en la imagen original. Las aceptadas se convierten en cajas de texto editables independientes. La similitud de fuentes y la reparación del fondo son aproximadas.</translation></message>
+    <message><source>Page %1</source><translation>Página %1</translation></message>
+    <message><source>Original + boxes</source><translation>Original con cajas</translation></message>
+    <message><source>Editable result</source><translation>Resultado editable</translation></message>
+    <message><source>Background only</source><translation>Solo fondo</translation></message>
+    <message><source>Update preview</source><translation>Actualizar vista previa</translation></message>
+    <message><source>Use</source><translation>Usar</translation></message>
+    <message><source>Recognized text</source><translation>Texto reconocido</translation></message>
+    <message><source>Confidence</source><translation>Confianza</translation></message>
+    <message><source>Substitute font</source><translation>Fuente de sustitución</translation></message>
+    <message><source>Apply editable OCR</source><translation>Aplicar OCR editable</translation></message>
+    <message><source>Preview needs updating. Changes will be rebuilt when applied.</source><translation>La vista previa necesita actualizarse. Los cambios se reconstruirán al aplicar.</translation></message>
+    <message><source>%1 text boxes. Check uncertain lines before applying.</source><translation>%1 cajas de texto. Revisá las líneas dudosas antes de aplicar.</translation></message>
+    <message><source>Select Update preview to reconstruct this page.</source><translation>Pulsá Actualizar vista previa para reconstruir esta página.</translation></message>
+    <message><source>Reconstructing background and editable text…</source><translation>Reconstruyendo el fondo y el texto editable…</translation></message>
+    <message><source>Preview updated.</source><translation>Vista previa actualizada.</translation></message>
+</context>
+<context>
+    <name>OcrEngine</name>
+    <message><source>The bundled OCR language resources are missing.</source><translation>Faltan los recursos de idiomas incluidos del OCR.</translation></message>
+    <message><source>The page could not be rendered.</source><translation>No se pudo renderizar la página.</translation></message>
+    <message><source>OCR language is not available: %1</source><translation>El idioma OCR no está disponible: %1</translation></message>
+    <message><source>The OCR language data could not be loaded.</source><translation>No se pudieron cargar los datos del idioma OCR.</translation></message>
+    <message><source>OCR failed or exceeded the three-minute page limit.</source><translation>El OCR falló o superó el límite de tres minutos por página.</translation></message>
+    <message><source>The bundled OCR fonts are missing.</source><translation>Faltan las fuentes incluidas del OCR.</translation></message>
+    <message><source>The substitute font does not support the corrected text. Uncheck this line.</source><translation>La fuente de sustitución no admite el texto corregido. Desmarcá esta línea.</translation></message>
+    <message><source>Cannot safely separate this text from its background. Uncheck the line and retry.</source><translation>No se puede separar con seguridad este texto del fondo. Desmarcá la línea y volvé a intentar.</translation></message>
+</context>
+<context>
+    <name>PdfDocument</name>
+    <message><source>The editable OCR page could not be created.</source><translation>No se pudo crear la página de OCR editable.</translation></message>
 </context>
 </TS>
