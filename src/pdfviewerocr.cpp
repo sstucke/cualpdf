@@ -21,6 +21,7 @@
 #include <QProgressDialog>
 #include <QPushButton>
 #include <QSettings>
+#include <QStandardItemModel>
 #include <QTextEdit>
 #include <QThread>
 #include <QToolButton>
@@ -56,6 +57,16 @@ void PdfViewerWidget::recognizeSelectedPages()
 {
     if (!m_valid || !m_document || m_transformInProgress || m_saveInProgress) return;
     commitTextEdit();
+    // Page selection survives switching back to object editing. Do not let an
+    // old page selection override the page whose object the user is editing.
+    // Freeze the targets before exec(): queued renders can change the viewport's
+    // current page while the settings dialog is open.
+    const int currentPage = m_selectionMode == SelectionMode::Objects
+        && m_selectedObject >= 0 && m_objectPageIndex >= 0 ? m_objectPageIndex
+        : m_selectionMode == SelectionMode::Region && m_regionPageIndex >= 0
+            ? m_regionPageIndex : m_currentPageIndex;
+    QVector<int> selectedPages(m_selectedPages.cbegin(), m_selectedPages.cend());
+    std::sort(selectedPages.begin(), selectedPages.end());
     QDialog settings(this);
     settings.setWindowTitle(tr("OCR — editable text and background"));
     auto *layout = new QVBoxLayout(&settings);
@@ -65,9 +76,25 @@ void PdfViewerWidget::recognizeSelectedPages()
     auto *warning = new QLabel(tr("Conversion rebuilds the selected pages: links, forms and other interactive content are not preserved. Save a separate copy of important originals."), &settings);
     warning->setWordWrap(true); layout->addWidget(warning);
     auto *scope = new QComboBox(&settings);
-    scope->addItems({tr("Current page"), tr("Selected pages"), tr("All pages")});
-    scope->setCurrentIndex(m_selectedPages.isEmpty() ? 0 : 1);
+    scope->setObjectName(QStringLiteral("ocrScope"));
+    scope->addItems({tr("Current page (%1)").arg(currentPage + 1),
+                     tr("Selected pages (%1)").arg(selectedPages.size()), tr("All pages")});
+    if (selectedPages.isEmpty())
+        qobject_cast<QStandardItemModel *>(scope->model())->item(1)->setEnabled(false);
+    scope->setCurrentIndex(m_selectionMode == SelectionMode::Page && !selectedPages.isEmpty() ? 1 : 0);
     layout->addWidget(scope);
+    auto *targets = new QLabel(&settings);
+    targets->setObjectName(QStringLiteral("ocrTargets")); targets->setWordWrap(true);
+    const auto updateTargets = [&] {
+        QStringList numbers;
+        if (scope->currentIndex() == 0) numbers.append(QString::number(currentPage + 1));
+        else if (scope->currentIndex() == 1)
+            for (const int index : selectedPages) numbers.append(QString::number(index + 1));
+        else numbers.append(tr("1–%1").arg(m_pageIds.size()));
+        targets->setText(tr("Pages to recognize: %1").arg(numbers.join(QStringLiteral(", "))));
+    };
+    connect(scope, &QComboBox::currentIndexChanged, &settings, updateTargets);
+    layout->addWidget(targets); updateTargets();
     auto *list = new QListWidget(&settings);
     layout->addWidget(list);
     const QStringList saved = QSettings().value("ocr/languages", QStringList{"spa", "eng"}).toStringList();
@@ -125,9 +152,8 @@ void PdfViewerWidget::recognizeSelectedPages()
     if (scope->currentIndex() == 2) {
         indexes.resize(m_pageIds.size()); std::iota(indexes.begin(), indexes.end(), 0);
     } else if (scope->currentIndex() == 1) {
-        indexes = QVector<int>(m_selectedPages.cbegin(), m_selectedPages.cend());
-        std::sort(indexes.begin(), indexes.end());
-    } else indexes = {m_currentPageIndex};
+        indexes = selectedPages;
+    } else indexes = {currentPage};
     if (indexes.isEmpty()) return;
     const bool reconvert = replaceText->isChecked();
     const auto canceled = std::make_shared<std::atomic_bool>(false);
@@ -139,15 +165,18 @@ void PdfViewerWidget::recognizeSelectedPages()
         QVector<OcrPage> pages;
         QVector<int> converted;
         QString error;
-        int skipped = 0;
+        QStringList skippedText, noText;
         qint64 pixels = 0;
         try {
             for (int i = 0; i < indexes.size() && !canceled->load(); ++i) {
                 const int index = indexes[i];
+                QMetaObject::invokeMethod(qApp, [progress, index, i] {
+                    if (progress) { progress->setLabelText(text("Recognizing page %1…").arg(index + 1)); progress->setValue(i); }
+                }, Qt::QueuedConnection);
                 const auto objects = document->pageObjects(index, QSize(1000, 1000));
                 if (!reconvert && std::any_of(objects.begin(), objects.end(), [](const auto &object) {
                         return object.kind == PdfPageObjectKind::Text && !object.text.trimmed().isEmpty();
-                    })) { ++skipped; continue; }
+                    })) { skippedText.append(QString::number(index + 1)); continue; }
                 const QSizeF size = document->pageSizePoints(index);
                 const double width = size.width() * 300.0 / 72.0;
                 const double height = size.height() * 300.0 / 72.0;
@@ -159,22 +188,31 @@ void PdfViewerWidget::recognizeSelectedPages()
                 auto page = OcrEngine::recognize(image, size, selectedLanguages.join('+'), &error,
                                                 [canceled] { return canceled->load(); });
                 if (!error.isEmpty() || canceled->load()) break;
-                if (page.runs.isEmpty()) ++skipped;
+                qInfo() << "OCR page" << index + 1 << "languages" << selectedLanguages
+                        << "text boxes" << page.runs.size();
+                if (page.runs.isEmpty()) noText.append(QString::number(index + 1));
                 else { pages.append(std::move(page)); converted.append(index); }
                 QMetaObject::invokeMethod(qApp, [progress, i] { if (progress) progress->setValue(i + 1); }, Qt::QueuedConnection);
             }
         } catch (const std::exception &e) { error = QString::fromUtf8(e.what()); }
-        QMetaObject::invokeMethod(qApp, [self, pages, converted, skipped, error, progress, canceled]() mutable {
+        QMetaObject::invokeMethod(qApp, [self, pages, converted, skippedText, noText, error, progress, canceled]() mutable {
             if (progress) progress->deleteLater();
             if (!self) return;
             self->m_transformInProgress = false; emit self->operationInProgressChanged(false); self->syncEditControls();
             if (canceled->load()) return;
             if (!error.isEmpty()) { QMessageBox::warning(self, text("OCR"), error); return; }
+            QStringList details;
+            if (!skippedText.isEmpty()) details.append(text("Pages skipped because they already contain text: %1. Enable reprocessing to convert them.").arg(skippedText.join(", ")));
+            if (!noText.isEmpty()) details.append(text("OCR ran but found no text on pages: %1. Check the page selection, languages and scan orientation.").arg(noText.join(", ")));
             if (pages.isEmpty()) {
-                QMessageBox::information(self, text("OCR"), text("No new text was found. Pages with existing text are skipped unless reprocessing is enabled.")); return;
+                QMessageBox::information(self, text("OCR"), details.join("\n\n")); return;
             }
             OcrReviewDialog review(std::move(pages), converted, self);
-            if (skipped) review.setWindowTitle(text("Review editable OCR — %1 pages skipped").arg(skipped));
+            if (!details.isEmpty()) {
+                auto *notice = new QLabel(details.join("\n\n"), &review);
+                notice->setWordWrap(true);
+                qobject_cast<QVBoxLayout *>(review.layout())->insertWidget(0, notice);
+            }
             if (review.exec() != QDialog::Accepted) return;
             auto reviewed = review.pages();
             QVector<OcrPage> accepted;

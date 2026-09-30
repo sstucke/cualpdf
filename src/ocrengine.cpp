@@ -3,6 +3,7 @@
 #include <QDirIterator>
 #include <QCoreApplication>
 #include <QFile>
+#include <QLocale>
 #include <QGlyphRun>
 #include <QPainter>
 #include <QRawFont>
@@ -94,20 +95,33 @@ double fontScore(const QImage &observed, const QImage &rendered)
 {
     if (rendered.isNull()) return std::numeric_limits<double>::infinity();
     const QSize size(std::clamp(observed.width(), 8, 700), std::clamp(observed.height(), 8, 80));
-    const QImage a = observed.scaled(size).convertToFormat(QImage::Format_Grayscale8);
-    const QImage b = rendered.scaled(size).convertToFormat(QImage::Format_Grayscale8);
-    double overlap = 0, total = 0;
+    // Compare glyph ink, not paper luminance. Gray/textured scans otherwise
+    // reward the darkest (usually bold) candidate for covering background noise.
+    const auto normalizedInk = [&](const QImage &image) {
+        const QImage gray = image.convertToFormat(QImage::Format_Grayscale8);
+        cv::Mat mask;
+        cv::threshold(cv::Mat(gray.height(), gray.width(), CV_8UC1,
+                      const_cast<uchar *>(gray.constBits()), gray.bytesPerLine()),
+                      mask, 0, 255, cv::THRESH_BINARY | cv::THRESH_OTSU);
+        return QImage(mask.data, mask.cols, mask.rows, int(mask.step), QImage::Format_Grayscale8)
+            .copy().scaled(size, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+    };
+    const QImage a = normalizedInk(observed), b = normalizedInk(rendered);
+    double overlap = 0, total = 0, observedInk = 0, renderedInk = 0;
     for (int y = 0; y < size.height(); ++y) {
         for (int x = 0; x < size.width(); ++x) {
             const double inkA = (255 - a.constScanLine(y)[x]) / 255.0;
             const double inkB = (255 - b.constScanLine(y)[x]) / 255.0;
             overlap += std::min(inkA, inkB);
             total += inkA + inkB;
+            observedInk += inkA; renderedInk += inkB;
         }
     }
     const double aspectA = double(observed.width()) / observed.height();
     const double aspectB = double(rendered.width()) / rendered.height();
-    return 1.0 - 2 * overlap / std::max(1.0, total) + 0.12 * std::abs(std::log(aspectA / aspectB));
+    return 1.0 - 2 * overlap / std::max(1.0, total)
+        + 0.5 * std::abs(std::log(std::max(1.0, observedInk) / std::max(1.0, renderedInk)))
+        + 0.12 * std::abs(std::log(aspectA / aspectB));
 }
 }
 
@@ -140,9 +154,12 @@ QVector<OcrTextRun> OcrEngine::parseTsv(const QByteArray &tsv, const QSize &imag
         const auto fields = line.split('\t');
         if (fields.size() < 12 || fields[0] != "5") continue;
         bool ok[5];
-        const int x = fields[6].toInt(&ok[0]), y = fields[7].toInt(&ok[1]);
-        const int w = fields[8].toInt(&ok[2]), h = fields[9].toInt(&ok[3]);
-        const float confidence = fields[10].toFloat(&ok[4]);
+        // sprintf follows LC_NUMERIC, so es_AR writes "95,9". QString::toFloat
+        // only accepts a dot, and then every word on the page is discarded.
+        const auto c = QLocale::c();
+        const int x = c.toInt(fields[6], &ok[0]), y = c.toInt(fields[7], &ok[1]);
+        const int w = c.toInt(fields[8], &ok[2]), h = c.toInt(fields[9], &ok[3]);
+        const float confidence = c.toFloat(QString(fields[10]).replace(',', '.'), &ok[4]);
         if (!std::all_of(std::begin(ok), std::end(ok), [](bool value) { return value; })
             || x < 0 || y < 0 || w <= 0 || h <= 0 || x > imageSize.width() - w
             || y > imageSize.height() - h || !std::isfinite(confidence) || confidence < 0) continue;
@@ -222,10 +239,22 @@ OcrPage OcrEngine::recognize(const QImage &source, const QSizeF &pageSize,
     }
     for (auto &run : page.runs) {
         if (canceled && canceled()) return page;
-        const QImage sample = source.copy(run.bounds);
+        const QStringList words = run.text.split(' ', Qt::SkipEmptyParts);
         double best = std::numeric_limits<double>::infinity();
         for (const auto &candidate : candidates) {
-            const double score = fontScore(sample, glyphImage(candidate.raw, run.text));
+            double score = 0, weight = 0;
+            if (words.size() == run.words.size()) {
+                for (int i = 0; i < words.size(); ++i) {
+                    if (words[i].size() < 2) continue;
+                    const double amount = words[i].size();
+                    score += amount * fontScore(source.copy(run.words[i]), glyphImage(candidate.raw, words[i]));
+                    weight += amount;
+                }
+            }
+            // Compare words independently: justified spacing and slightly
+            // tilted baselines must not be mistaken for bold/italic typefaces.
+            score = weight > 0 ? score / weight
+                : fontScore(source.copy(run.bounds), glyphImage(candidate.raw, run.text));
             if (score < best) {
                 best = score;
                 run.fontFamily = candidate.raw.familyName() + " " + candidate.raw.styleName();

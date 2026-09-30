@@ -5,6 +5,10 @@
 1. Abrir un PDF escaneado y pulsar **OCR…** en la barra del visor.
 2. Elegir página actual, selección o documento y sus idiomas (se pueden combinar).
    Español e inglés se seleccionan inicialmente; la selección se recuerda.
+   El diálogo muestra los números de página antes de reconocer. En modo de
+   edición de objetos se propone la página activa, no una selección de páginas
+   conservada de una operación anterior. Los destinos quedan fijados al abrir
+   el diálogo; un cambio del visor mientras tanto no los modifica.
 3. Revisar las líneas, corregir el texto y marcar cuáles convertir. Las de baja
    confianza quedan desmarcadas. Lo desmarcado permanece en la imagen original.
 4. **Actualizar vista previa** permite comparar original con cajas, resultado
@@ -107,6 +111,19 @@ Al informar un error: adjuntar, si se puede compartir, una página mínima, idio
 seleccionados, SO, versión/commit, resultado esperado y capturas de las tres
 vistas previas. No incorporar documentos privados al repositorio. Separar fallas
 del reconocimiento, selección de fuente, máscara de tinta y escritura del PDF.
+El resultado distingue páginas omitidas por texto previo de páginas procesadas
+sin texto reconocido; el progreso y el log indican los números de página.
+
+Para diagnosticar localmente un PDF sin incorporarlo al repositorio:
+
+```sh
+QT_QPA_PLATFORM=offscreen QT_QPA_PLATFORMTHEME= QT_STYLE_OVERRIDE=Fusion \
+  build/bin/cualpdf_ocr_test --scan documento.pdf 2 spa
+```
+
+El número es de base 1. Un directorio opcional al final guarda el render, texto
+reconocido, fondo y PDF reconstruido. El original no se modifica. No adjuntar
+esas salidas a un issue si contienen material privado.
 
 Referencias técnicas: [API Tesseract](https://tesseract-ocr.github.io/tessdoc/APIExample.html),
 [salida TSV](https://tesseract-ocr.github.io/tessdoc/Command-Line-Usage.html),

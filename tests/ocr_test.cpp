@@ -6,11 +6,16 @@
 #include <QDialogButtonBox>
 #include <QEventLoop>
 #include <QListWidget>
+#include <QLabel>
+#include <QMouseEvent>
+#include <QComboBox>
+#include <QToolButton>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QSettings>
 #include <QTimer>
 #include <QApplication>
+#include <QLocale>
 #include <QDebug>
 #include <QDir>
 #include <QFile>
@@ -131,6 +136,99 @@ int viewerWorkflow(const QByteArray &original, QSize size, const QString &path) 
     QEventLoop drain; QTimer::singleShot(200, &drain, &QEventLoop::quit); drain.exec();
     return 0;
 }
+int staleSelectionWorkflow(const QByteArray &scan, const QString &path) {
+    PdfDocument twoPages(PdfDocument::createBlankPageArchive(QSizeF(612, 360)));
+    CHECK(twoPages.restorePageStructure({1}, {1, 2}, {2}, scan));
+    CHECK(write(path, twoPages.exportPages({0, 1})));
+    PdfViewerWidget viewer(path); viewer.resize(1100, 800); viewer.show();
+    CHECK(waitUntil([&] { return viewer.isValid(); }));
+    const auto button = [&](const QString &text) -> QToolButton * {
+        for (auto *candidate : viewer.findChildren<QToolButton *>())
+            if (candidate->text() == text) return candidate;
+        return nullptr;
+    };
+    auto *edit = button("Edit PDF"); auto *select = button("Select Page"); CHECK(edit && select);
+    const auto clickPage = [&](int index) {
+        for (auto *label : viewer.findChildren<QLabel *>()) {
+            if (!label->property("pdfPageIndex").isValid() || label->property("pdfPageIndex").toInt() != index) continue;
+            const QPoint position = label->rect().center();
+            const QPointF local(position), global(label->mapToGlobal(position));
+            QMouseEvent press(QEvent::MouseButtonPress, local, global, Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+            QMouseEvent release(QEvent::MouseButtonRelease, local, global, Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+            QApplication::sendEvent(label, &press); QApplication::sendEvent(label, &release);
+            return true;
+        }
+        return false;
+    };
+    edit->click(); select->click(); CHECK(clickPage(0));
+    edit->click(); edit->click(); // Return to objects, retaining the old page selection.
+    viewer.goToPage(1); CHECK(clickPage(1)); CHECK(viewer.currentPageIndex() == 1);
+    bool finished = false, correctTarget = false, correctReview = false;
+    QString dialogError;
+    int scopeIndex = -1;
+    QTimer driver;
+    QObject::connect(&driver, &QTimer::timeout, &viewer, [&] {
+        auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+        if (!dialog) return;
+        if (auto *message = qobject_cast<QMessageBox *>(dialog)) {
+            dialogError = message->text(); message->reject(); finished = true; return;
+        }
+        if (auto *review = qobject_cast<OcrReviewDialog *>(dialog)) {
+            correctReview = review->findChild<QComboBox *>()->currentText() == "Page 2" && !review->pages().first().runs.isEmpty();
+            dialog->reject(); finished = true; return;
+        }
+        if (dialog->windowTitle() != "OCR — editable text and background") return;
+        auto *scope = dialog->findChild<QComboBox *>("ocrScope");
+        if (!scope) { dialogError = "Missing scope control"; dialog->reject(); finished = true; return; }
+        scopeIndex = scope->currentIndex();
+        correctTarget = scope->currentText() == "Current page (2)";
+        viewer.goToPage(0); // A queued viewport update must not retarget OCR.
+        dialog->accept();
+    });
+    driver.start(20);
+    auto *action = viewer.findChild<QAction *>("editableOcrAction"); CHECK(action);
+    QTimer::singleShot(0, action, &QAction::trigger);
+    CHECK(waitUntil([&] { return finished; }));
+    CHECK(scopeIndex == 0); // Current page, not a stale selection from page mode.
+    CHECK(dialogError.isEmpty()); CHECK(correctTarget); CHECK(correctReview);
+    CHECK(!viewer.isModified());
+    return 0;
+}
+int probeScan(const QString &path, int pageNumber, const QString &language, const QString &output) {
+    PdfDocument document(path); CHECK(document.isValid());
+    CHECK(pageNumber > 0 && pageNumber <= document.pageCount());
+    const auto size = document.pageSizePoints(pageNumber - 1);
+    const auto image = document.renderPage(pageNumber - 1, qRound(size.width() * 300.0 / 72.0));
+    CHECK(!image.isNull());
+    const auto objects = document.pageObjects(pageNumber - 1, image.size());
+    int nativeText = 0;
+    for (const auto &object : objects) nativeText += object.kind == PdfPageObjectKind::Text && !object.text.trimmed().isEmpty();
+    QString error;
+    auto page = OcrEngine::recognize(image, size, language, &error);
+    qInfo() << "Scan probe: page" << pageNumber << "render" << image.size()
+            << "existing text objects" << nativeText << "OCR boxes" << page.runs.size() << "error" << error;
+    QMap<QString, int> matchedFonts;
+    for (const auto &run : page.runs) ++matchedFonts[run.fontFamily];
+    qInfo() << "Proposed fonts:" << matchedFonts;
+    CHECK(error.isEmpty());
+    if (!page.runs.isEmpty()) {
+        QTemporaryDir workflow;
+        CHECK(workflow.isValid());
+        CHECK(staleSelectionWorkflow(document.exportPages({pageNumber - 1}), workflow.filePath("viewer.pdf")) == 0);
+    }
+    if (!output.isEmpty()) {
+        CHECK(QDir().mkpath(output));
+        CHECK(image.save(output + "/scan.png"));
+        CHECK(write(output + "/recognized.txt", contents(page).toUtf8()));
+        if (!page.runs.isEmpty()) {
+            CHECK(OcrEngine::prepareBackground(&page));
+            CHECK(page.background.save(output + "/background.png"));
+            const auto archive = PdfDocument::createOcrPagesArchive({page}, &error);
+            CHECK(!archive.isEmpty()); CHECK(write(output + "/editable.pdf", archive));
+        }
+    }
+    return page.runs.isEmpty() ? 2 : 0;
+}
 int run(const QString &artifactDirectory) {
     const QStringList codes{"spa", "eng", "fra", "cat", "por", "ita", "deu"};
     for (const auto &code : codes) CHECK(OcrEngine::languages().contains(code));
@@ -211,6 +309,7 @@ int run(const QString &artifactDirectory) {
     PdfDocument reopened(temp.filePath("edited.pdf")); CHECK(sameText(document, reopened, source.size()));
     // Replacement round-trip: original raster -> OCR -> original -> OCR.
     const auto original = PdfDocument::createImagePageArchive(source, page.pageSize);
+    CHECK(staleSelectionWorkflow(original, temp.filePath("stale-selection.pdf")) == 0);
     PdfDocument history(original);
     CHECK(history.restorePageStructure({1}, {2}, {2}, archive));
     CHECK(viewerWorkflow(original, source.size(), temp.filePath("viewer.pdf")) == 0);
@@ -235,6 +334,14 @@ int run(const QString &artifactDirectory) {
     const QByteArray tsv = "5\t1\t1\t1\t1\t1\t10\t10\t40\t20\t95\tHola\n"
         "5\t1\t1\t1\t1\t2\t200\t10\t40\t20\t30\tmundo\n"
         "5\t1\t1\t1\t2\t1\t-1\t10\t40\t20\t90\tinvalid\n";
+    const auto previousLocale = QLocale();
+    QLocale::setDefault(QLocale(QLocale::Spanish, QLocale::Argentina));
+    const QByteArray decimalTsv = "5\t1\t1\t1\t1\t1\t10\t10\t40\t20\t95,5\tCapítulo\n";
+    const auto decimalParsed = OcrEngine::parseTsv(decimalTsv, QSize(300, 200));
+    QLocale::setDefault(previousLocale);
+    CHECK(decimalParsed.size() == 1);
+    CHECK(decimalParsed[0].text == QString::fromUtf8("Capítulo"));
+    CHECK(decimalParsed[0].accepted);
     const auto parsed = OcrEngine::parseTsv(tsv, QSize(300, 200));
     CHECK(parsed.size() == 2); CHECK(parsed[0].accepted); CHECK(!parsed[1].accepted);
     if (!artifactDirectory.isEmpty()) {
@@ -259,7 +366,10 @@ int main(int argc, char **argv) {
     QSettings::setDefaultFormat(QSettings::IniFormat);
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, settings.path());
     PdfDocument::initializeLibrary();
-    const int result = run(argc > 1 ? QString::fromLocal8Bit(argv[1]) : QString());
+    const int result = argc >= 5 && QByteArray(argv[1]) == "--scan"
+        ? probeScan(QString::fromLocal8Bit(argv[2]), QByteArray(argv[3]).toInt(),
+                    QString::fromLocal8Bit(argv[4]), argc > 5 ? QString::fromLocal8Bit(argv[5]) : QString())
+        : run(argc > 1 ? QString::fromLocal8Bit(argv[1]) : QString());
     PdfDocument::shutdownLibrary();
     return result;
 }

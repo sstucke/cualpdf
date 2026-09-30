@@ -608,6 +608,13 @@
 </context>
 <context>
     <name>PdfViewerWidget</name>
+    <message><source>Current page (%1)</source><translation>Página actual (%1)</translation></message>
+    <message><source>Selected pages (%1)</source><translation>Páginas seleccionadas (%1)</translation></message>
+    <message><source>Pages to recognize: %1</source><translation>Páginas a reconocer: %1</translation></message>
+    <message><source>1–%1</source><translation>1–%1</translation></message>
+    <message><source>Recognizing page %1…</source><translation>Reconociendo página %1…</translation></message>
+    <message><source>Pages skipped because they already contain text: %1. Enable reprocessing to convert them.</source><translation>Páginas omitidas porque ya contienen texto: %1. Activá el reprocesamiento para convertirlas.</translation></message>
+    <message><source>OCR ran but found no text on pages: %1. Check the page selection, languages and scan orientation.</source><translation>El OCR se ejecutó pero no encontró texto en las páginas: %1. Revisá la selección de páginas, los idiomas y la orientación del escaneo.</translation></message>
     <message><source>OCR…</source><translation>OCR…</translation></message>
     <message><source>Convert a scan into editable text and a separate background</source><translation>Convertir un escaneo en texto editable y un fondo separado</translation></message>
     <message><source>OCR — editable text and background</source><translation>OCR: texto editable y fondo</translation></message>
