@@ -307,6 +307,10 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME pdfdocument_structure
              COMMAND cualpdf_pdfdocument_structure_test)
+    # libpdfium.dylib's install name is ./libpdfium.dylib. dyld resolves that
+    # from the process cwd, which ctest sets to the build root, not bin/.
+    set_tests_properties(pdfdocument_structure PROPERTIES
+        WORKING_DIRECTORY $<TARGET_FILE_DIR:cualpdf_pdfdocument_structure_test>)
     add_executable(cualpdf_ocr_test tests/ocr_test.cpp
         src/ocrengine.cpp src/ocrengine.h src/pdfdocument.cpp src/pdfdocument.h
         src/ocrreviewdialog.cpp src/ocrreviewdialog.h
@@ -329,6 +333,7 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME editable_ocr COMMAND cualpdf_ocr_test)
     set_tests_properties(editable_ocr PROPERTIES TIMEOUT 180
+        WORKING_DIRECTORY $<TARGET_FILE_DIR:cualpdf_ocr_test>
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORMTHEME=;QT_STYLE_OVERRIDE=Fusion;TESSDATA_PREFIX=/nonexistent-cualpdf-test")
 endif()
 
