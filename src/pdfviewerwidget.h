@@ -31,6 +31,7 @@ class QRubberBand;
 class QToolBar;
 class QToolButton;
 class PdfInsertionPlaceholder;
+struct OcrPage;
 
 // PDF viewer with lazy page rendering. Full document tabs expose navigation,
 // page layout and zoom controls; the compact details-panel preview reuses the
@@ -102,6 +103,8 @@ private:
         QVector<quint64> afterPageIds;
         QVector<quint64> archivedPageIds;
         QByteArray pageArchive;
+        QVector<quint64> beforeArchivedPageIds;
+        QByteArray beforePageArchive;
         int objectPageIndex = -1;
         QVector<int> objectPath;
         QVector<float> beforeMatrix;
@@ -220,13 +223,19 @@ private:
     void cropSelectedRegion();
     void lightenSelectedPage(int overridePageIndex = -1);
     void replaceSelectedPagesWithRaster(const QString &description,
-                                       const std::function<QImage(const QImage &)> &transform);
+                                       const std::function<QImage(const QImage &)> &transform,
+                                       const QVector<QSizeF> &outputSizes = {});
     void invertSelectedPages();
     void flattenSelectedPages();
     void autoCropSelectedPages();
     void splitSelectedPages();
     void clearSelectedPageView();
     void improveSelectedScans();
+    void recognizeSelectedPages();
+    void applyOcrPages(QVector<OcrPage> pages, const QVector<int> &indexes);
+    void replacePagesFromArchive(const QVector<int> &indexes, const QByteArray &archive,
+                                 const QString &description);
+    void editSelectedObject(bool removeObject);
     void correctSelectedPerspective();
     void compressDocument();
     void editSelectedPageExternally();
@@ -320,6 +329,7 @@ private:
     QToolButton *m_organizePagesButton = nullptr;
     QAction *m_cutPagesAction = nullptr;
     QAction *m_deletePagesAction = nullptr;
+    QAction *m_ocrAction = nullptr;
     QAction *m_copyPagesAction = nullptr;
     QAction *m_extractPagesAction = nullptr;
     PageLayout m_pageLayout = PageLayout::Continuous;

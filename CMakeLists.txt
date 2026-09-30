@@ -98,7 +98,7 @@ find_package(PDFium REQUIRED PATHS ${pdfium_SOURCE_DIR} NO_DEFAULT_PATH)
 # image-enhancement tools ("Aclarar" and friends). It's built from its
 # pinned, hash-verified source release rather than relying on a
 # system-installed copy, matching the reproducible approach used for PDFium
-# above. Only the core+imgproc modules are built (everything these tools
+# above. Only the core+imgproc+photo modules are built (everything these tools
 # need) and every optional codec/GUI/acceleration backend is switched off,
 # since a default OpenCV build pulls in ffmpeg, gstreamer, and similar
 # dependencies this app never uses.
@@ -108,7 +108,7 @@ FetchContent_Declare(opencv
     URL_HASH SHA256=b0528f5a1d379d59d4701cb28c36e22214cc51cf64594e5b56f2d3e6c0233095
 )
 
-set(BUILD_LIST "core,imgproc" CACHE STRING "" FORCE)
+set(BUILD_LIST "core,imgproc,photo" CACHE STRING "" FORCE)
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 # OpenCV defaults to the static MSVC CRT (/MT) for static-lib builds, but Qt
 # (and so cualpdf) links the dynamic CRT (/MD). Mixing the two in one
@@ -192,7 +192,7 @@ set(CMAKE_AUTOUIC ON)
 # resolve a .lib archive's own external symbols without them), which is
 # how they were reaching cualpdf.exe's own link line.
 if(WIN32)
-    foreach(_cualpdf_opencv_target IN ITEMS opencv_core opencv_imgproc
+    foreach(_cualpdf_opencv_target IN ITEMS opencv_core opencv_imgproc opencv_photo
                                             opencv_flann opencv_geometry)
         if(TARGET ${_cualpdf_opencv_target})
             foreach(_cualpdf_link_libs_property IN ITEMS
@@ -216,6 +216,8 @@ if(WIN32)
     endforeach()
 endif()
 
+include(cmake/OcrDependencies.cmake)
+
 qt_add_executable(cualpdf
     src/main.cpp
     src/logger.cpp
@@ -231,6 +233,11 @@ qt_add_executable(cualpdf
     src/foldercontentmodel.h
     src/imageenhancement.cpp
     src/imageenhancement.h
+    src/ocrengine.cpp
+    src/ocrengine.h
+    src/ocrreviewdialog.cpp
+    src/ocrreviewdialog.h
+    src/pdfviewerocr.cpp
     src/pdfviewerwidget.cpp
     src/pdfviewerwidget.h
     src/pdflistitemdelegate.cpp
@@ -249,7 +256,8 @@ qt_add_executable(cualpdf
     src/tipsdialog.h
 )
 
-target_link_libraries(cualpdf PRIVATE Qt6::Widgets Qt6::PrintSupport pdfium opencv_core opencv_imgproc)
+target_link_libraries(cualpdf PRIVATE Qt6::Widgets Qt6::PrintSupport pdfium opencv_core opencv_imgproc opencv_photo libtesseract)
+cualpdf_embed_ocr_assets(cualpdf)
 target_include_directories(cualpdf PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
 # OpenCV, built as a raw add_subdirectory() above (not an installed package
@@ -261,6 +269,7 @@ target_include_directories(cualpdf PRIVATE
     "${CMAKE_BINARY_DIR}"
     "${opencv_SOURCE_DIR}/modules/core/include"
     "${opencv_SOURCE_DIR}/modules/imgproc/include"
+    "${opencv_SOURCE_DIR}/modules/photo/include"
     "${opencv_SOURCE_DIR}/modules/flann/include"
     "${opencv_SOURCE_DIR}/modules/geometry/include"
 )
@@ -298,6 +307,29 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME pdfdocument_structure
              COMMAND cualpdf_pdfdocument_structure_test)
+    add_executable(cualpdf_ocr_test tests/ocr_test.cpp
+        src/ocrengine.cpp src/ocrengine.h src/pdfdocument.cpp src/pdfdocument.h
+        src/ocrreviewdialog.cpp src/ocrreviewdialog.h
+        src/pdfviewerwidget.cpp src/pdfviewerwidget.h src/pdfviewerocr.cpp
+        src/imageenhancement.cpp src/appsettings.cpp src/printdialog.cpp src/printdialog.h)
+    target_include_directories(cualpdf_ocr_test PRIVATE "${CMAKE_SOURCE_DIR}/src"
+        "${CMAKE_BINARY_DIR}" "${opencv_SOURCE_DIR}/modules/core/include"
+        "${opencv_SOURCE_DIR}/modules/imgproc/include" "${opencv_SOURCE_DIR}/modules/photo/include")
+    target_link_libraries(cualpdf_ocr_test PRIVATE Qt6::Widgets Qt6::PrintSupport pdfium
+        opencv_core opencv_imgproc opencv_photo libtesseract)
+    cualpdf_embed_ocr_assets(cualpdf_ocr_test)
+    if(WIN32)
+        add_custom_command(TARGET cualpdf_ocr_test POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${pdfium_SOURCE_DIR}/bin/pdfium.dll" "$<TARGET_FILE_DIR:cualpdf_ocr_test>")
+    elseif(APPLE)
+        add_custom_command(TARGET cualpdf_ocr_test POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${pdfium_SOURCE_DIR}/lib/libpdfium.dylib" "$<TARGET_FILE_DIR:cualpdf_ocr_test>")
+    else()
+        set_target_properties(cualpdf_ocr_test PROPERTIES BUILD_RPATH "${pdfium_SOURCE_DIR}/lib")
+    endif()
+    add_test(NAME editable_ocr COMMAND cualpdf_ocr_test)
+    set_tests_properties(editable_ocr PROPERTIES TIMEOUT 180
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORMTHEME=;QT_STYLE_OVERRIDE=Fusion;TESSDATA_PREFIX=/nonexistent-cualpdf-test")
 endif()
 
 set_target_properties(cualpdf PROPERTIES
@@ -335,6 +367,9 @@ install(TARGETS cualpdf
 if(WIN32)
     install(FILES "${pdfium_SOURCE_DIR}/bin/pdfium.dll" DESTINATION ${CMAKE_INSTALL_BINDIR})
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # The installed binary must find the PDFium shipped beside it, not a path
+    # into the developer's build tree.
+    set_target_properties(cualpdf PROPERTIES INSTALL_RPATH "$ORIGIN")
     install(FILES "${pdfium_SOURCE_DIR}/lib/libpdfium.so" DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif()
 # macOS: libpdfium.dylib is bundled into cualpdf.app/Contents/Frameworks by

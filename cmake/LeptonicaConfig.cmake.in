@@ -1,0 +1,4 @@
+set(Leptonica_FOUND TRUE)
+set(Leptonica_VERSION 1.85.0)
+set(Leptonica_INCLUDE_DIRS "@ocr_leptonica_SOURCE_DIR@/src;@ocr_leptonica_BINARY_DIR@/src")
+set(Leptonica_LIBRARIES leptonica)
