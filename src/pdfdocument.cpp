@@ -1451,13 +1451,17 @@ QByteArray PdfDocument::exportEditedObjectPage(int pageIndex, const QVector<int>
     if (ok && removeObject) {
         ok = FPDFPage_RemoveObject(page, object);
         if (ok) FPDFPageObj_Destroy(object);
-    } else if (ok && FPDFPageObj_GetType(object) == FPDF_PAGEOBJ_IMAGE
-               && !imageCrop.isEmpty() && QRectF(0, 0, 1, 1).contains(imageCrop)) {
+    } else if (ok && FPDFPageObj_GetType(object) == FPDF_PAGEOBJ_IMAGE && !imageCrop.isEmpty()) {
+        const QRectF unit(0, 0, 1, 1);
+        const QRectF cropNorm = imageCrop.normalized().intersected(unit);
+        if (cropNorm.width() < 0.005 || cropNorm.height() < 0.005) {
+            ok = false;
+        } else {
         const FPDF_BITMAP original = FPDFImageObj_GetBitmap(object);
         const QImage image = bitmapToImage(original);
         if (original) FPDFBitmap_Destroy(original);
-        const QRect pixels(qRound(imageCrop.x() * image.width()), qRound(imageCrop.y() * image.height()),
-                           qRound(imageCrop.width() * image.width()), qRound(imageCrop.height() * image.height()));
+        const QRect pixels(qRound(cropNorm.x() * image.width()), qRound(cropNorm.y() * image.height()),
+                           qRound(cropNorm.width() * image.width()), qRound(cropNorm.height() * image.height()));
         const QRect clipped = pixels.intersected(image.rect());
         const QImage crop = image.copy(clipped).convertToFormat(QImage::Format_ARGB32);
         FS_MATRIX matrix;
@@ -1477,10 +1481,12 @@ QByteArray PdfDocument::exportEditedObjectPage(int pageIndex, const QVector<int>
                 float(matrix.c * h), float(matrix.d * h),
                 float(matrix.e + matrix.a * x + matrix.c * y),
                 float(matrix.f + matrix.b * x + matrix.d * y)};
-            ok = FPDFImageObj_SetBitmap(nullptr, 0, object, bitmap)
+            FPDF_PAGE pages[] = {page};
+            ok = FPDFImageObj_SetBitmap(pages, 1, object, bitmap)
                  && FPDFPageObj_SetMatrix(object, &cropped);
         }
         if (bitmap) FPDFBitmap_Destroy(bitmap);
+        }
     } else {
         ok = false;
     }

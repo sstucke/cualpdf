@@ -149,7 +149,7 @@ QVector<OcrTextRun> OcrEngine::parseTsv(const QByteArray &tsv, const QSize &imag
 {
     QVector<OcrTextRun> runs;
     QString previousKey;
-    int wordCount = 0;
+    int weightSum = 0;
     for (const auto &line : QString::fromUtf8(tsv).split('\n')) {
         const auto fields = line.split('\t');
         if (fields.size() < 12 || fields[0] != "5") continue;
@@ -170,15 +170,19 @@ QVector<OcrTextRun> OcrEngine::parseTsv(const QByteArray &tsv, const QSize &imag
         const bool gap = !runs.isEmpty() && x - runs.last().bounds.right() > 2 * h;
         if (runs.isEmpty() || key != previousKey || gap) {
             runs.append(OcrTextRun{});
-            wordCount = 0;
+            weightSum = 0;
         }
         auto &run = runs.last();
         run.text += (run.text.isEmpty() ? QString() : QStringLiteral(" ")) + text;
         run.bounds = run.bounds.united(box);
         run.words.append(box);
-        run.confidence = (run.confidence * wordCount + confidence) / (wordCount + 1);
+        // A short noisy token such as "—¡" must not count as much as the word
+        // it sits on, or a correct line falls just under the accept cutoff.
+        const int weight = qMax(1, text.size());
+        run.confidence = weightSum == 0 ? confidence
+            : (run.confidence * weightSum + confidence * weight) / (weightSum + weight);
+        weightSum += weight;
         run.accepted = run.confidence >= 65;
-        ++wordCount;
         previousKey = key;
     }
     return runs;
@@ -288,25 +292,38 @@ bool OcrEngine::prepareBackground(OcrPage *page, const Canceled &canceled)
     if (!page || page->source.isNull()) return false;
     cv::Mat source = bgr(page->source);
     cv::Mat mask(source.rows, source.cols, CV_8UC1, cv::Scalar(0));
-    for (const auto &run : page->runs) {
+    for (auto &run : page->runs) {
         if (canceled && canceled()) return false;
         if (!run.accepted || run.text.trimmed().isEmpty() || run.fontData.isEmpty()) continue;
         const QRawFont font(run.fontData, 64, QFont::PreferNoHinting);
-        if (run.text.isRightToLeft() || !font.isValid() || font.glyphIndexesForString(run.text).contains(0))
-            throw std::runtime_error(tr("The substitute font does not support the corrected text. Uncheck this line.").toStdString());
+        if (run.text.isRightToLeft() || !font.isValid() || font.glyphIndexesForString(run.text).contains(0)) {
+            run.accepted = false;
+            continue;
+        }
+        cv::Mat runMask(source.rows, source.cols, CV_8UC1, cv::Scalar(0));
+        bool safe = true;
         for (const QRect &word : run.words) {
             const QRect box = word.adjusted(-2, -2, 2, 2).intersected(page->source.rect());
+            if (box.isEmpty()) continue;
             const cv::Rect region(box.x(), box.y(), box.width(), box.height());
             cv::Mat gray, ink;
             cv::cvtColor(source(region), gray, cv::COLOR_BGR2GRAY);
             cv::threshold(gray, ink, 0, 255, cv::THRESH_BINARY_INV | cv::THRESH_OTSU);
-            // Refuse ambiguous dense regions instead of leaving duplicate ink
-            // behind an editable text object. The original document is unchanged.
-            if (cv::countNonZero(ink) > ink.total() * 0.7)
-                throw std::runtime_error(tr("Cannot safely separate this text from its background. Uncheck the line and retry.").toStdString());
+            // Dense regions cannot be separated reliably. Keep that complete
+            // OCR line in the raster background instead of aborting the page;
+            // the current flow has no pre-apply review in which to uncheck it.
+            if (cv::countNonZero(ink) > ink.total() * 0.7) {
+                safe = false;
+                break;
+            }
             cv::dilate(ink, ink, cv::getStructuringElement(cv::MORPH_RECT, cv::Size(3, 3)));
-            cv::bitwise_or(mask(region), ink, mask(region));
+            cv::bitwise_or(runMask(region), ink, runMask(region));
         }
+        if (!safe) {
+            run.accepted = false;
+            continue;
+        }
+        cv::bitwise_or(mask, runMask, mask);
     }
     cv::Mat restored;
     if (cv::countNonZero(mask)) cv::inpaint(source, mask, restored, 3.0, cv::INPAINT_TELEA);

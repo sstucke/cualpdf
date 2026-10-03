@@ -73,6 +73,7 @@ public slots:
     void setContinuousPageLayout(bool continuous);
     void printDocument();
     void saveDocument(bool createTimestampedBackup, int backupVersionLimit);
+    void saveDocumentAs(const QString &filePath);
     void undo();
     void redo();
 
@@ -236,6 +237,11 @@ private:
     void replacePagesFromArchive(const QVector<int> &indexes, const QByteArray &archive,
                                  const QString &description);
     void editSelectedObject(bool removeObject);
+    void beginImageCrop();
+    void cancelImageCrop();
+    void finishImageCrop();
+    int cropHandleAt(const QPoint &position) const;
+    void updateImageCropDrag(const QPoint &position);
     void correctSelectedPerspective();
     void compressDocument();
     void editSelectedPageExternally();
@@ -254,7 +260,8 @@ private:
                                           const QVector<quint64> &targetPageIds,
                                           int targetHistoryPosition);
     void updateModifiedState();
-    void finishDocumentSave(bool success, const QString &errorMessage);
+    void finishDocumentSave(bool success, const QString &errorMessage,
+                            const QString &savedAsPath = {});
     void setCurrentPageFromPointer(int pageIndex);
     QPointF normalizedPagePosition(const QLabel *label, const QPointF &position) const;
     void navigateByPageGroup(int direction);
@@ -319,6 +326,7 @@ private:
     bool m_updatingTextFormat = false;
     bool m_placingText = false;
     QToolBar *m_editToolbar = nullptr;
+    QLabel *m_cropHint = nullptr;
     bool m_editingPdf = false;
     QToolButton *m_selectPageButton = nullptr;
     QToolButton *m_selectRegionButton = nullptr;
@@ -350,6 +358,11 @@ private:
     QPoint m_objectPressPos;
     QPoint m_objectDragOffset;
     bool m_draggingObject = false;
+    bool m_croppingImage = false;
+    QRectF m_imageCrop;
+    int m_cropDragHandle = -1;
+    QPoint m_cropPressPos;
+    QRectF m_cropPressRect;
     QFileSystemWatcher *m_imageWatcher = nullptr;
     QTimer *m_imageReloadTimer = nullptr;
     QString m_imageEditPath;

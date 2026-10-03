@@ -253,6 +253,11 @@ MainWindow::MainWindow(QWidget *parent)
     m_saveAction->setEnabled(false);
     ui->menuFile->insertAction(ui->menuRecent->menuAction(), m_saveAction);
     connect(m_saveAction, &QAction::triggered, this, &MainWindow::saveCurrentDocument);
+    m_saveAsAction = new QAction(tr("Save As…"), this);
+    m_saveAsAction->setShortcut(QKeySequence::SaveAs);
+    m_saveAsAction->setEnabled(false);
+    ui->menuFile->insertAction(ui->menuRecent->menuAction(), m_saveAsAction);
+    connect(m_saveAsAction, &QAction::triggered, this, &MainWindow::saveCurrentDocumentAs);
 
     if (auto *printButton = qobject_cast<QToolButton *>(ui->mainToolBar->widgetForAction(ui->actionPrint)))
         printButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
@@ -727,6 +732,7 @@ void MainWindow::updateStatusBarForCurrentTab()
     m_sortMenuBar->menuAction()->setVisible(showingExplorer);
     m_editMenu->menuAction()->setVisible(viewer != nullptr);
     m_saveAction->setVisible(viewer != nullptr);
+    m_saveAsAction->setVisible(viewer != nullptr);
     m_closeTabAction->setEnabled(currentWidget != nullptr
                                  && (!viewer || !viewer->isOperationInProgress()));
     const bool explorerIsOpen = ui->tabWidget->indexOf(ui->explorerTab) >= 0;
@@ -739,6 +745,7 @@ void MainWindow::updateStatusBarForCurrentTab()
         && (ui->tabWidget->count() > 1 || (preserveExplorer && !explorerIsOpen)));
     m_saveAction->setEnabled(viewer && viewer->isModified()
                              && !viewer->isOperationInProgress());
+    m_saveAsAction->setEnabled(viewer && !viewer->isOperationInProgress());
     m_undoAction->setEnabled(viewer && viewer->canUndo());
     m_redoAction->setEnabled(viewer && viewer->canRedo());
 
@@ -817,6 +824,45 @@ void MainWindow::saveCurrentDocument()
 {
     if (auto *viewer = qobject_cast<PdfViewerWidget *>(ui->tabWidget->currentWidget()))
         saveViewer(viewer);
+}
+
+void MainWindow::saveCurrentDocumentAs()
+{
+    auto *viewer = qobject_cast<PdfViewerWidget *>(ui->tabWidget->currentWidget());
+    if (!viewer || viewer->isOperationInProgress()) return;
+    QString path = QFileDialog::getSaveFileName(
+        this, tr("Save PDF As"), viewer->filePath(), tr("PDF documents (*.pdf)"));
+    if (path.isEmpty()) return;
+    if (QFileInfo(path).suffix().isEmpty()) path += QStringLiteral(".pdf");
+
+    const QString fileName = QFileInfo(path).fileName();
+    QProgressDialog progress(tr("Saving \"%1\"…").arg(fileName), QString(), 0, 0, this);
+    progress.setWindowTitle(tr("Saving PDF"));
+    progress.setCancelButton(nullptr);
+    progress.setWindowModality(Qt::WindowModal);
+    progress.setMinimumDuration(0);
+    bool success = false, finished = false;
+    QString errorMessage;
+    QEventLoop eventLoop;
+    const auto connection = connect(
+        viewer, &PdfViewerWidget::saveFinished, &eventLoop,
+        [&](bool saved, const QString &error) {
+            success = saved; finished = true; errorMessage = error; eventLoop.quit();
+        });
+    viewer->saveDocumentAs(path);
+    if (!finished) eventLoop.exec();
+    disconnect(connection);
+    if (!success) {
+        qWarning() << "Could not save PDF as:" << path << errorMessage;
+        QMessageBox::critical(this, tr("Save Failed"),
+                              tr("Could not save \"%1\".").arg(fileName));
+        return;
+    }
+    addRecentFile(path);
+    updatePdfTabTitle(viewer);
+    if (QDir::cleanPath(QFileInfo(path).absolutePath()) == QDir::cleanPath(currentFolderPath))
+        scheduleFolderRefresh();
+    updateStatusBarForCurrentTab();
 }
 
 void MainWindow::openExplorerTab()

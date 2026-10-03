@@ -46,6 +46,9 @@ public:
     QString imageEditorPath() const;
     void setImageEditorPath(const QString &path);
 
+    QString ocrLanguage() const;
+    void setOcrLanguage(const QString &language);
+
 private:
     QSettings m_settings;
 };

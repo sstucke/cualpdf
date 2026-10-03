@@ -410,6 +410,18 @@
         <translation>Guardar</translation>
     </message>
     <message>
+        <source>Save As…</source>
+        <translation>Guardar como…</translation>
+    </message>
+    <message>
+        <source>Save PDF As</source>
+        <translation>Guardar PDF como</translation>
+    </message>
+    <message>
+        <source>PDF documents (*.pdf)</source>
+        <translation>Documentos PDF (*.pdf)</translation>
+    </message>
+    <message>
         <source>Print…</source>
         <translation>Imprimir…</translation>
     </message>
@@ -613,12 +625,17 @@
     <message><source>Pages to recognize: %1</source><translation>Páginas a reconocer: %1</translation></message>
     <message><source>1–%1</source><translation>1–%1</translation></message>
     <message><source>Recognizing page %1…</source><translation>Reconociendo página %1…</translation></message>
+    <message><source>Building editable page %1…</source><translation>Construyendo página editable %1…</translation></message>
     <message><source>Pages skipped because they already contain text: %1. Enable reprocessing to convert them.</source><translation>Páginas omitidas porque ya contienen texto: %1. Activá el reprocesamiento para convertirlas.</translation></message>
     <message><source>OCR ran but found no text on pages: %1. Check the page selection, languages and scan orientation.</source><translation>El OCR se ejecutó pero no encontró texto en las páginas: %1. Revisá la selección de páginas, los idiomas y la orientación del escaneo.</translation></message>
+    <message><source>OCR ran but found no text on pages: %1. Check the page selection, document language and scan orientation.</source><translation>El OCR se ejecutó pero no encontró texto en las páginas: %1. Revisá la selección de páginas, el idioma del documento y la orientación del escaneo.</translation></message>
+    <message><source>Some detected areas could not be safely separated from the background and were preserved as images on pages: %1.</source><translation>Algunas áreas detectadas no pudieron separarse con seguridad del fondo y se conservaron como imagen en las páginas: %1.</translation></message>
     <message><source>OCR…</source><translation>OCR…</translation></message>
     <message><source>Convert a scan into editable text and a separate background</source><translation>Convertir un escaneo en texto editable y un fondo separado</translation></message>
     <message><source>OCR — editable text and background</source><translation>OCR: texto editable y fondo</translation></message>
     <message><source>Choose the languages used in the document. OCR runs locally. The original pages remain available through Undo until the document is closed.</source><translation>Elegí los idiomas del documento. El OCR se ejecuta localmente. Las páginas originales se pueden recuperar con Deshacer hasta cerrar el documento.</translation></message>
+    <message><source>OCR runs locally using the document language selected in Preferences. Each page is applied as soon as it is recognized.</source><translation>El OCR se ejecuta localmente usando el idioma del documento elegido en Preferencias. Cada página se aplica apenas termina de reconocerse.</translation></message>
+    <message><source>Document language: %1</source><translation>Idioma del documento: %1</translation></message>
     <message><source>Conversion rebuilds the selected pages: links, forms and other interactive content are not preserved. Save a separate copy of important originals.</source><translation>La conversión reconstruye las páginas elegidas: no se conservan enlaces, formularios ni otros contenidos interactivos. Guardá una copia separada de los originales importantes.</translation></message>
     <message><source>Current page</source><translation>Página actual</translation></message>
     <message><source>Selected pages</source><translation>Páginas seleccionadas</translation></message>
@@ -631,9 +648,12 @@
     <message><source>OCR licenses…</source><translation>Licencias OCR…</translation></message>
     <message><source>OCR licenses</source><translation>Licencias OCR</translation></message>
     <message><source>Recognize and review</source><translation>Reconocer y revisar</translation></message>
+    <message><source>Recognize text</source><translation>Reconocer texto</translation></message>
     <message><source>Select at least one language.</source><translation>Seleccioná al menos un idioma.</translation></message>
     <message><source>Recognizing text…</source><translation>Reconociendo texto…</translation></message>
     <message><source>This selection is too large for an OCR batch. Select fewer pages (up to 80 megapixels per batch).</source><translation>La selección es demasiado grande para un lote de OCR. Seleccioná menos páginas (hasta 80 megapíxeles por lote).</translation></message>
+    <message><source>This page is too large for OCR (maximum 24 megapixels).</source><translation>Esta página es demasiado grande para OCR (máximo 24 megapíxeles).</translation></message>
+    <message><source>OCR was canceled. Pages already completed were preserved.</source><translation>Se canceló el OCR. Las páginas ya completadas se conservaron.</translation></message>
     <message><source>No new text was found. Pages with existing text are skipped unless reprocessing is enabled.</source><translation>No se encontró texto nuevo. Las páginas con texto existente se omiten salvo que se active el reprocesamiento.</translation></message>
     <message><source>Review editable OCR — %1 pages skipped</source><translation>Revisar OCR editable: %1 páginas omitidas</translation></message>
     <message><source>Building editable pages…</source><translation>Construyendo páginas editables…</translation></message>
@@ -641,8 +661,8 @@
     <message><source>Editable OCR</source><translation>OCR editable</translation></message>
     <message><source>Edit object</source><translation>Editar objeto</translation></message>
     <message><source>This object is inside a grouped form and cannot be removed or cropped individually.</source><translation>Este objeto está dentro de un grupo y no se puede eliminar o recortar individualmente.</translation></message>
-    <message><source>Crop image without moving text</source><translation>Recortar imagen sin mover el texto</translation></message>
-    <message><source>Crop image without moving text…</source><translation>Recortar imagen sin mover el texto…</translation></message>
+    <message><source>Crop image</source><translation>Recortar imagen</translation></message>
+    <message><source>Drag the handles to adjust the crop. They stay until you press Enter. Esc cancels.</source><translation>Arrastrá los mangos para ajustar el recorte. Siguen ahí hasta que presionés Enter. Esc cancela.</translation></message>
     <message><source>Left (%)</source><translation>Izquierda (%)</translation></message>
     <message><source>Top (%)</source><translation>Arriba (%)</translation></message>
     <message><source>Right (%)</source><translation>Derecha (%)</translation></message>
@@ -1208,6 +1228,13 @@
         <source>Editing</source>
         <translation>Edición</translation>
     </message>
+    <message><source>OCR</source><translation>OCR</translation></message>
+    <message><source>Document language</source><translation>Idioma del documento</translation></message>
+    <message><source>This language is used by OCR in every document.</source><translation>El OCR usa este idioma en todos los documentos.</translation></message>
+    <message><source>Add language pack…</source><translation>Añadir paquete de idioma…</translation></message>
+    <message><source>Add OCR language</source><translation>Añadir idioma de OCR</translation></message>
+    <message><source>Tesseract models (*.traineddata)</source><translation>Modelos Tesseract (*.traineddata)</translation></message>
+    <message><source>The language could not be added, or already exists.</source><translation>No se pudo añadir el idioma o ya existe.</translation></message>
     <message>
         <source>Images on a page open in this program. Leave it empty to use the application your system uses for PNG files.</source>
         <translation>Las imágenes de la página se abren en este programa. Dejalo vacío para usar la aplicación del sistema para archivos PNG.</translation>
@@ -1533,8 +1560,6 @@
     <message><source>The OCR language data could not be loaded.</source><translation>No se pudieron cargar los datos del idioma OCR.</translation></message>
     <message><source>OCR failed or exceeded the three-minute page limit.</source><translation>El OCR falló o superó el límite de tres minutos por página.</translation></message>
     <message><source>The bundled OCR fonts are missing.</source><translation>Faltan las fuentes incluidas del OCR.</translation></message>
-    <message><source>The substitute font does not support the corrected text. Uncheck this line.</source><translation>La fuente de sustitución no admite el texto corregido. Desmarcá esta línea.</translation></message>
-    <message><source>Cannot safely separate this text from its background. Uncheck the line and retry.</source><translation>No se puede separar con seguridad este texto del fondo. Desmarcá la línea y volvé a intentar.</translation></message>
 </context>
 <context>
     <name>PdfDocument</name>

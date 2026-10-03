@@ -3,9 +3,7 @@
 #include "pdfdocument.h"
 #include "pdfviewerwidget.h"
 #include <QAction>
-#include <QDialogButtonBox>
 #include <QEventLoop>
-#include <QListWidget>
 #include <QLabel>
 #include <QMouseEvent>
 #include <QComboBox>
@@ -73,7 +71,7 @@ int viewerWorkflow(const QByteArray &original, QSize size, const QString &path) 
     PdfViewerWidget viewer(path); viewer.resize(1100, 800); viewer.show();
     CHECK(waitUntil([&] { return viewer.isValid(); }));
     auto *action = viewer.findChild<QAction *>("editableOcrAction"); CHECK(action);
-    bool reviewed = false, cancel = true, previewRequested = false, previewDone = false;
+    bool settingsClosed = false, cancel = true;
     QString dialogError;
     QTimer driver;
     QObject::connect(&driver, &QTimer::timeout, &viewer, [&] {
@@ -82,36 +80,19 @@ int viewerWorkflow(const QByteArray &original, QSize size, const QString &path) 
         if (auto *message = qobject_cast<QMessageBox *>(dialog)) {
             dialogError = message->text(); message->reject(); return;
         }
-        if (auto *review = qobject_cast<OcrReviewDialog *>(dialog)) {
-            if (cancel) { reviewed = true; dialog->reject(); return; }
-            if (!previewRequested) {
-                previewRequested = true;
-                for (auto *button : review->findChildren<QPushButton *>())
-                    if (button->text() == "Update preview") { button->click(); break; }
-                return;
-            }
-            auto *box = review->findChild<QDialogButtonBox *>();
-            if (box->button(QDialogButtonBox::Ok)->isEnabled()) {
-                previewDone = true; reviewed = true; review->accept();
-            }
-        } else if (dialog->windowTitle() == "OCR — editable text and background") {
-            if (auto *languages = dialog->findChild<QListWidget *>())
-                for (int i = 0; i < languages->count(); ++i) {
-                    auto *item = languages->item(i);
-                    item->setCheckState(item->data(Qt::UserRole) == "spa" || item->data(Qt::UserRole) == "eng"
-                        ? Qt::Checked : Qt::Unchecked);
-                }
-            dialog->accept();
+        if (dialog->windowTitle() == "OCR — editable text and background") {
+            settingsClosed = true;
+            cancel ? dialog->reject() : dialog->accept();
         }
     });
     driver.start(20);
     QTimer::singleShot(0, action, &QAction::trigger);
-    CHECK(waitUntil([&] { return reviewed || !dialogError.isEmpty(); }));
+    CHECK(waitUntil([&] { return settingsClosed || !dialogError.isEmpty(); }));
     CHECK(dialogError.isEmpty()); CHECK(!viewer.isModified()); CHECK(!viewer.canUndo());
-    cancel = false; reviewed = false;
+    cancel = false; settingsClosed = false;
     QTimer::singleShot(0, action, &QAction::trigger);
-    CHECK(waitUntil([&] { return (reviewed && viewer.canUndo()) || !dialogError.isEmpty(); }));
-    CHECK(dialogError.isEmpty()); CHECK(previewDone); CHECK(viewer.isModified());
+    CHECK(waitUntil([&] { return viewer.canUndo() || !dialogError.isEmpty(); }, 180000));
+    CHECK(dialogError.isEmpty()); CHECK(viewer.isModified());
     driver.stop();
     const auto save = [&] {
         bool finished = false, ok = false;
@@ -131,12 +112,23 @@ int viewerWorkflow(const QByteArray &original, QSize size, const QString &path) 
     viewer.redo(); CHECK(waitUntil([&] { return !viewer.isOperationInProgress(); }));
     CHECK(viewer.canUndo()); CHECK(save());
     { PdfDocument restored(path); CHECK(!texts(restored, size).isEmpty()); }
+    const QString copyPath = path + QStringLiteral(".copy.pdf");
+    bool copied = false, copyOk = false;
+    const auto copyConnection = QObject::connect(
+        &viewer, &PdfViewerWidget::saveFinished, &viewer,
+        [&](bool success, const QString &) { copied = true; copyOk = success; });
+    viewer.saveDocumentAs(copyPath);
+    CHECK(waitUntil([&] { return copied; }));
+    QObject::disconnect(copyConnection);
+    CHECK(copyOk); CHECK(viewer.filePath() == copyPath);
+    { PdfDocument copy(copyPath); CHECK(copy.isValid()); CHECK(!texts(copy, size).isEmpty()); }
     viewer.close();
     // Drain queued rendering work before shutting down PDFium in main().
     QEventLoop drain; QTimer::singleShot(200, &drain, &QEventLoop::quit); drain.exec();
     return 0;
 }
 int staleSelectionWorkflow(const QByteArray &scan, const QString &path) {
+    QSettings().setValue("ocr/language", "eng");
     PdfDocument twoPages(PdfDocument::createBlankPageArchive(QSizeF(612, 360)));
     CHECK(twoPages.restorePageStructure({1}, {1, 2}, {2}, scan));
     CHECK(write(path, twoPages.exportPages({0, 1})));
@@ -163,7 +155,7 @@ int staleSelectionWorkflow(const QByteArray &scan, const QString &path) {
     edit->click(); select->click(); CHECK(clickPage(0));
     edit->click(); edit->click(); // Return to objects, retaining the old page selection.
     viewer.goToPage(1); CHECK(clickPage(1)); CHECK(viewer.currentPageIndex() == 1);
-    bool finished = false, correctTarget = false, correctReview = false;
+    bool correctTarget = false;
     QString dialogError;
     int scopeIndex = -1;
     QTimer driver;
@@ -171,15 +163,11 @@ int staleSelectionWorkflow(const QByteArray &scan, const QString &path) {
         auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
         if (!dialog) return;
         if (auto *message = qobject_cast<QMessageBox *>(dialog)) {
-            dialogError = message->text(); message->reject(); finished = true; return;
-        }
-        if (auto *review = qobject_cast<OcrReviewDialog *>(dialog)) {
-            correctReview = review->findChild<QComboBox *>()->currentText() == "Page 2" && !review->pages().first().runs.isEmpty();
-            dialog->reject(); finished = true; return;
+            dialogError = message->text(); message->reject(); return;
         }
         if (dialog->windowTitle() != "OCR — editable text and background") return;
         auto *scope = dialog->findChild<QComboBox *>("ocrScope");
-        if (!scope) { dialogError = "Missing scope control"; dialog->reject(); finished = true; return; }
+        if (!scope) { dialogError = "Missing scope control"; dialog->reject(); return; }
         scopeIndex = scope->currentIndex();
         correctTarget = scope->currentText() == "Current page (2)";
         viewer.goToPage(0); // A queued viewport update must not retarget OCR.
@@ -188,10 +176,10 @@ int staleSelectionWorkflow(const QByteArray &scan, const QString &path) {
     driver.start(20);
     auto *action = viewer.findChild<QAction *>("editableOcrAction"); CHECK(action);
     QTimer::singleShot(0, action, &QAction::trigger);
-    CHECK(waitUntil([&] { return finished; }));
+    CHECK(waitUntil([&] { return viewer.canUndo() || !dialogError.isEmpty(); }, 180000));
     CHECK(scopeIndex == 0); // Current page, not a stale selection from page mode.
-    CHECK(dialogError.isEmpty()); CHECK(correctTarget); CHECK(correctReview);
-    CHECK(!viewer.isModified());
+    CHECK(dialogError.isEmpty()); CHECK(correctTarget);
+    CHECK(viewer.isModified());
     return 0;
 }
 int probeScan(const QString &path, int pageNumber, const QString &language, const QString &output) {
@@ -328,14 +316,30 @@ int run(const QString &artifactDirectory) {
     QImage blank(500, 500, QImage::Format_RGB32); blank.fill(Qt::white);
     CHECK(OcrEngine::recognize(blank, QSizeF(200, 200), "eng", &error).runs.isEmpty()); CHECK(error.isEmpty());
     partial.runs[0].accepted = true; partial.runs[0].text = QString::fromUtf8("漢字");
-    bool rejected = false;
-    try { OcrEngine::prepareBackground(&partial); } catch (const std::runtime_error &) { rejected = true; }
-    CHECK(rejected);
+    CHECK(OcrEngine::prepareBackground(&partial));
+    CHECK(!partial.runs[0].accepted);
+    // An inseparable dense line stays raster while the rest of the page can
+    // still become editable; it must not abort the complete OCR operation.
+    auto dense = page;
+    dense.source = QImage(40, 40, QImage::Format_RGB32); dense.source.fill(Qt::black);
+    dense.runs = {page.runs.first()};
+    dense.runs[0].accepted = true; dense.runs[0].bounds = QRect(0, 0, 40, 40);
+    dense.runs[0].words = {QRect(0, 0, 40, 40)};
+    CHECK(OcrEngine::prepareBackground(&dense));
+    CHECK(!dense.runs[0].accepted);
+    CHECK(dense.background == dense.source.convertToFormat(QImage::Format_RGB888));
     const QByteArray tsv = "5\t1\t1\t1\t1\t1\t10\t10\t40\t20\t95\tHola\n"
         "5\t1\t1\t1\t1\t2\t200\t10\t40\t20\t30\tmundo\n"
         "5\t1\t1\t1\t2\t1\t-1\t10\t40\t20\t90\tinvalid\n";
     const auto previousLocale = QLocale();
     QLocale::setDefault(QLocale(QLocale::Spanish, QLocale::Argentina));
+    const QByteArray weightedTsv =
+        "5\t1\t1\t1\t1\t1\t10\t10\t30\t20\t30\t—¡Yo,\n"
+        "5\t1\t1\t1\t1\t2\t50\t10\t90\t20\t96\tmalabarista!\n";
+    const auto weighted = OcrEngine::parseTsv(weightedTsv, QSize(300, 200));
+    CHECK(weighted.size() == 1);
+    CHECK(weighted[0].text == QString::fromUtf8("—¡Yo, malabarista!"));
+    CHECK(weighted[0].accepted);
     const QByteArray decimalTsv = "5\t1\t1\t1\t1\t1\t10\t10\t40\t20\t95,5\tCapítulo\n";
     const auto decimalParsed = OcrEngine::parseTsv(decimalTsv, QSize(300, 200));
     QLocale::setDefault(previousLocale);

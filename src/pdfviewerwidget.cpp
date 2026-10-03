@@ -44,6 +44,7 @@
 #include <QMessageBox>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QKeyEvent>
 #include <QPainterPath>
 #include <QPalette>
 #include <QPointer>
@@ -849,6 +850,26 @@ public:
         update();
     }
 
+    void setImageCrop(const QRect &imageBounds, const QRectF &normalized, bool active)
+    {
+        m_cropBounds = imageBounds;
+        m_cropNormalized = normalized;
+        m_cropActive = active;
+        update();
+    }
+
+    int imageCropHandleAt(const QPoint &position) const
+    {
+        const auto handles = cropHandleCenters();
+        for (int index = 0; index < handles.size(); ++index) {
+            if (QRectF(handles[index].x() - 10, handles[index].y() - 10, 20, 20).contains(position))
+                return index;
+        }
+        if (cropRect().contains(position))
+            return 8;
+        return -1;
+    }
+
 protected:
     void paintEvent(QPaintEvent *event) override
     {
@@ -909,6 +930,29 @@ protected:
             painter.setPen(QPen(accent, selected ? 2.0 : 1.0));
             painter.drawRect(bounds);
         }
+
+        if (m_cropActive && m_cropBounds.isValid() && !m_cropNormalized.isEmpty()) {
+            const QRectF crop = cropRect();
+            QPainterPath outside;
+            outside.addRect(m_cropBounds);
+            QPainterPath inside;
+            inside.addRect(crop);
+            painter.fillPath(outside.subtracted(inside), QColor(0, 0, 0, 110));
+            painter.setPen(QPen(QColor(QStringLiteral("#ffffff")), 1));
+            painter.setBrush(Qt::NoBrush);
+            painter.drawRect(crop.adjusted(1, 1, -1, -1));
+            painter.setPen(QPen(accent, 2));
+            painter.drawRect(crop);
+            painter.setPen(QPen(QColor(QStringLiteral("#102030")), 1));
+            painter.setBrush(Qt::white);
+            constexpr qreal handleSize = 14.0;
+            for (const QPointF &point : cropHandleCenters()) {
+                const QRectF handle(point.x() - handleSize / 2, point.y() - handleSize / 2,
+                                    handleSize, handleSize);
+                painter.drawRect(handle);
+                painter.fillRect(handle.adjusted(3, 3, -3, -3), accent);
+            }
+        }
     }
 
 private:
@@ -920,6 +964,37 @@ private:
     QPoint m_objectDragOffset;
     QVector<int> m_guideXs;
     QVector<int> m_guideYs;
+    QRectF cropRect() const
+    {
+        return QRectF(m_cropBounds.x() + m_cropNormalized.x() * m_cropBounds.width(),
+                      m_cropBounds.y() + m_cropNormalized.y() * m_cropBounds.height(),
+                      m_cropNormalized.width() * m_cropBounds.width(),
+                      m_cropNormalized.height() * m_cropBounds.height());
+    }
+
+    // Acrobat draws the handles on the crop edge. A full-page scan puts that
+    // edge on the widget border, which clips a centered square. Keep them inside.
+    QList<QPointF> cropHandleCenters() const
+    {
+        const QRectF crop = cropRect();
+        const QList<QPointF> raw = {
+            crop.topLeft(), QPointF(crop.center().x(), crop.top()), crop.topRight(),
+            QPointF(crop.right(), crop.center().y()), crop.bottomRight(),
+            QPointF(crop.center().x(), crop.bottom()), crop.bottomLeft(),
+            QPointF(crop.left(), crop.center().y()),
+        };
+        constexpr qreal half = 8.0;
+        QList<QPointF> placed;
+        for (const QPointF &point : raw) {
+            placed.append(QPointF(qBound(half, point.x(), width() - half),
+                                  qBound(half, point.y(), height() - half)));
+        }
+        return placed;
+    }
+
+    QRect m_cropBounds;
+    QRectF m_cropNormalized;
+    bool m_cropActive = false;
 };
 }
 
@@ -969,6 +1044,8 @@ PdfViewerWidget::PdfViewerWidget(const QString &filePath, int pageRenderWidth,
     m_scrollArea->setAlignment(Qt::AlignHCenter | Qt::AlignTop);
     m_scrollArea->setWidget(m_pagesContainer);
     m_scrollArea->viewport()->installEventFilter(this);
+    m_scrollArea->installEventFilter(this);
+    m_scrollArea->viewport()->setFocusPolicy(Qt::StrongFocus);
     m_pagesContainer->installEventFilter(this);
 
     const QColor baseColor = palette().color(QPalette::Base);
@@ -1299,6 +1376,12 @@ void PdfViewerWidget::buildToolbar()
     });
 
     m_editToolbar->hide();
+    m_cropHint = new QLabel(tr("Drag the handles to adjust the crop. They stay until you press Enter. Esc cancels."), this);
+    m_cropHint->setAlignment(Qt::AlignCenter);
+    m_cropHint->setStyleSheet(QStringLiteral(
+        "background:#16324f; color:#ffffff; padding:8px 12px; font-weight:600;"));
+    m_cropHint->hide();
+    layout()->addWidget(m_cropHint);
     setSelectionMode(SelectionMode::Read);
     syncEditControls();
 
@@ -2039,6 +2122,8 @@ void PdfViewerWidget::setSelectionMode(SelectionMode mode)
         m_selectedObject = -1;
         m_draggingObject = false;
         m_objectDragOffset = {};
+        m_croppingImage = false;
+        m_cropDragHandle = -1;
     }
     updateSelectionOverlays();
     refreshPageObjects();
@@ -2088,7 +2173,7 @@ void PdfViewerWidget::showPageContextMenu(int pageIndex, const QPoint &globalPos
         const bool image = selected && m_pageObjects[m_selectedObject].kind == PdfPageObjectKind::Image;
         auto *edit = menu.addAction(image ? tr("Edit Image…") : tr("Edit Text…"));
         edit->setEnabled(editable);
-        auto *crop = menu.addAction(tr("Crop image without moving text…"));
+        auto *crop = menu.addAction(tr("Crop image"));
         crop->setEnabled(editable && image && m_pageObjects[m_selectedObject].path.size() == 1);
         auto *remove = menu.addAction(tr("Delete object"));
         remove->setEnabled(editable && m_pageObjects[m_selectedObject].path.size() == 1);
@@ -2096,7 +2181,7 @@ void PdfViewerWidget::showPageContextMenu(int pageIndex, const QPoint &globalPos
         if (m_ocrAction) menu.addAction(m_ocrAction);
         auto *action = menu.exec(globalPosition);
         if (action == edit) { if (image) editSelectedImage(); else editSelectedText(); }
-        else if (action == crop) editSelectedObject(false);
+        else if (action == crop) beginImageCrop();
         else if (action == remove) editSelectedObject(true);
         return;
     }
@@ -2790,10 +2875,17 @@ void PdfViewerWidget::updateSelectionOverlays()
                 bounds.append(object.bounds);
             label->setObjectOverlay(bounds, m_selectedObject, m_hoveredObject, m_objectDragOffset,
                                     m_alignGuideXs, m_alignGuideYs);
+            const bool cropping = m_croppingImage && m_selectedObject >= 0
+                                  && m_selectedObject < m_pageObjects.size();
+            label->setImageCrop(cropping ? m_pageObjects[m_selectedObject].bounds : QRect(),
+                                m_imageCrop, cropping);
         } else {
             label->setObjectOverlay({}, -1, -1, {}, {}, {});
+            label->setImageCrop({}, {}, false);
         }
     }
+    if (m_cropHint)
+        m_cropHint->setVisible(m_croppingImage);
     syncEditControls();
     syncTextFormatBar();
 }
@@ -2822,6 +2914,13 @@ void PdfViewerWidget::refreshPageObjects()
         }
     }
     updateSelectionOverlays();
+}
+
+int PdfViewerWidget::cropHandleAt(const QPoint &position) const
+{
+    if (!m_croppingImage || m_objectPageIndex < 0 || m_objectPageIndex >= m_pageLabels.size())
+        return -1;
+    return static_cast<PdfPageLabel *>(m_pageLabels[m_objectPageIndex])->imageCropHandleAt(position);
 }
 
 int PdfViewerWidget::objectAt(const QLabel *label, const QPoint &position) const
@@ -4555,12 +4654,43 @@ void PdfViewerWidget::saveDocument(bool createTimestampedBackup, int backupVersi
     thread->start();
 }
 
-void PdfViewerWidget::finishDocumentSave(bool success, const QString &errorMessage)
+void PdfViewerWidget::saveDocumentAs(const QString &filePath)
+{
+    if (!m_valid || m_saveInProgress || filePath.isEmpty())
+        return;
+    if (m_transformInProgress) {
+        emit saveFinished(false, QStringLiteral("An edit is still in progress."));
+        return;
+    }
+
+    m_saveInProgress = true;
+    m_transformInProgress = true;
+    emit operationInProgressChanged(true);
+    ++m_documentRevision;
+    m_pagesLoading.clear();
+    syncEditControls();
+
+    const std::shared_ptr<PdfDocument> document = m_document;
+    const QPointer<PdfViewerWidget> weakSelf(this);
+    QThread *thread = QThread::create([weakSelf, document, filePath]() {
+        QString errorMessage;
+        const bool success = document->saveSafely(filePath, false, 0, &errorMessage);
+        QMetaObject::invokeMethod(qApp, [weakSelf, success, errorMessage, filePath]() {
+            if (weakSelf) weakSelf->finishDocumentSave(success, errorMessage, filePath);
+        }, Qt::QueuedConnection);
+    });
+    connect(thread, &QThread::finished, thread, &QThread::deleteLater);
+    thread->start();
+}
+
+void PdfViewerWidget::finishDocumentSave(bool success, const QString &errorMessage,
+                                         const QString &savedAsPath)
 {
     m_saveInProgress = false;
     m_transformInProgress = false;
     emit operationInProgressChanged(false);
     if (success) {
+        if (!savedAsPath.isEmpty()) m_filePath = savedAsPath;
         m_savedHistoryPosition = m_historyPosition;
         updateModifiedState();
     }
@@ -4625,6 +4755,18 @@ void PdfViewerWidget::syncNavigationControls()
 
 bool PdfViewerWidget::eventFilter(QObject *watched, QEvent *event)
 {
+    if (event->type() == QEvent::KeyPress && m_croppingImage) {
+        auto *keyEvent = static_cast<QKeyEvent *>(event);
+        if (keyEvent->key() == Qt::Key_Escape) {
+            cancelImageCrop();
+            return true;
+        }
+        if (keyEvent->key() == Qt::Key_Return || keyEvent->key() == Qt::Key_Enter) {
+            finishImageCrop();
+            return true;
+        }
+    }
+
     const QVariant pageIndexProperty = watched->property("pdfPageIndex");
     if (pageIndexProperty.isValid()) {
         const int pageIndex = pageIndexProperty.toInt();
@@ -4665,10 +4807,34 @@ bool PdfViewerWidget::eventFilter(QObject *watched, QEvent *event)
             return true;
         }
 
+        if (event->type() == QEvent::KeyPress && m_croppingImage) {
+            auto *keyEvent = static_cast<QKeyEvent *>(event);
+            if (keyEvent->key() == Qt::Key_Escape) {
+                cancelImageCrop();
+                return true;
+            }
+            if (keyEvent->key() == Qt::Key_Return || keyEvent->key() == Qt::Key_Enter) {
+                finishImageCrop();
+                return true;
+            }
+        }
+
         if (event->type() == QEvent::MouseButtonPress) {
             auto *mouseEvent = static_cast<QMouseEvent *>(event);
             if (mouseEvent->button() != Qt::LeftButton)
                 return false;
+            if (m_croppingImage && pageIndex == m_objectPageIndex) {
+                const int handle = cropHandleAt(mouseEvent->position().toPoint());
+                if (handle >= 0) {
+                    m_cropDragHandle = handle;
+                    m_cropPressPos = mouseEvent->position().toPoint();
+                    m_cropPressRect = m_imageCrop;
+                    m_scrollArea->setFocus();
+                    return true;
+                }
+                finishImageCrop();
+                return true;
+            }
 
             setCurrentPageFromPointer(pageIndex);
             if (m_placingText && m_editingPdf) {
@@ -4736,6 +4902,30 @@ bool PdfViewerWidget::eventFilter(QObject *watched, QEvent *event)
                 startSelectedPageDrag(label);
                 return true;
             }
+        }
+
+        if (event->type() == QEvent::MouseMove && m_croppingImage && pageIndex == m_objectPageIndex) {
+            auto *mouseEvent = static_cast<QMouseEvent *>(event);
+            if (m_cropDragHandle >= 0 && mouseEvent->buttons().testFlag(Qt::LeftButton)) {
+                updateImageCropDrag(mouseEvent->position().toPoint());
+                return true;
+            }
+            const int handle = cropHandleAt(mouseEvent->position().toPoint());
+            const Qt::CursorShape cursors[] = {
+                Qt::SizeFDiagCursor, Qt::SizeVerCursor, Qt::SizeBDiagCursor, Qt::SizeHorCursor,
+                Qt::SizeFDiagCursor, Qt::SizeVerCursor, Qt::SizeBDiagCursor, Qt::SizeHorCursor,
+                Qt::SizeAllCursor,
+            };
+            label->setCursor(handle >= 0 ? cursors[handle] : Qt::ArrowCursor);
+        }
+
+        if (event->type() == QEvent::MouseButtonRelease && m_croppingImage
+            && m_cropDragHandle >= 0 && pageIndex == m_objectPageIndex) {
+            // Acrobat keeps the crop handles after each drag so the frame can
+            // be adjusted again. Enter, or a click outside the image, applies it.
+            m_cropDragHandle = -1;
+            updateSelectionOverlays();
+            return true;
         }
 
         if (event->type() == QEvent::MouseMove && m_selectionMode == SelectionMode::Objects

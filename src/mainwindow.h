@@ -61,6 +61,7 @@ private:
     void showTips();
     void showMergePdfDialog();
     void saveCurrentDocument();
+    void saveCurrentDocumentAs();
     void openExplorerTab();
     void closeAllTabs();
     void closeOtherTabs();
@@ -111,6 +112,7 @@ private:
     QActionGroup *viewModeActionGroup = nullptr;
     QActionGroup *sortActionGroup = nullptr;
     QAction *m_saveAction = nullptr;
+    QAction *m_saveAsAction = nullptr;
     QAction *m_closeTabAction = nullptr;
     QAction *m_undoAction = nullptr;
     QAction *m_redoAction = nullptr;

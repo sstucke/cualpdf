@@ -1,26 +1,22 @@
 #include "pdfviewerwidget.h"
+#include "appsettings.h"
 #include "ocrengine.h"
-#include "ocrreviewdialog.h"
 
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QDir>
-#include <QDoubleSpinBox>
-#include <QFileDialog>
 #include <QFile>
 #include <QAction>
-#include <QFileInfo>
-#include <QFormLayout>
 #include <QLabel>
-#include <QListWidget>
 #include <QMessageBox>
-#include <QPainter>
 #include <QPointer>
+
 #include <QProgressDialog>
 #include <QPushButton>
-#include <QSettings>
+#include <QScrollArea>
+#include <QSemaphore>
 #include <QStandardItemModel>
 #include <QTextEdit>
 #include <QThread>
@@ -33,13 +29,6 @@
 
 namespace {
 QString text(const char *value) { return QCoreApplication::translate("PdfViewerWidget", value); }
-QString languageName(const QString &code)
-{
-    static const QHash<QString, QString> names{{"spa", "Español"}, {"eng", "English"},
-        {"fra", "Français"}, {"cat", "Català"}, {"por", "Português"}, {"ita", "Italiano"}, {"deu", "Deutsch"}};
-    return names.value(code, code) + " (" + code + ')';
-}
-
 QProgressDialog *progressDialog(QWidget *parent, const QString &title, int count,
                                const std::shared_ptr<std::atomic_bool> &canceled)
 {
@@ -47,6 +36,8 @@ QProgressDialog *progressDialog(QWidget *parent, const QString &title, int count
     dialog->setWindowModality(Qt::WindowModal);
     dialog->setAutoClose(false); dialog->setAutoReset(false);
     dialog->setMinimumDuration(0); dialog->setValue(0);
+    dialog->setMinimumWidth(520);
+    if (auto *label = dialog->findChild<QLabel *>()) label->setWordWrap(true);
     QObject::connect(dialog, &QProgressDialog::canceled, parent, [canceled] { canceled->store(true); });
     QObject::connect(parent, &QObject::destroyed, dialog, [canceled] { canceled->store(true); });
     return dialog;
@@ -70,8 +61,12 @@ void PdfViewerWidget::recognizeSelectedPages()
     QDialog settings(this);
     settings.setWindowTitle(tr("OCR — editable text and background"));
     auto *layout = new QVBoxLayout(&settings);
-    auto *hint = new QLabel(tr("Choose the languages used in the document. OCR runs locally. "
-                              "The original pages remain available through Undo until the document is closed."), &settings);
+    const QStringList availableLanguages = OcrEngine::languages();
+    QString selectedLanguage = AppSettings().ocrLanguage();
+    if (!availableLanguages.contains(selectedLanguage) && !availableLanguages.isEmpty())
+        selectedLanguage = availableLanguages.first();
+    auto *hint = new QLabel(tr("OCR runs locally using the document language selected in Preferences. "
+                              "Each page is applied as soon as it is recognized."), &settings);
     hint->setWordWrap(true); layout->addWidget(hint);
     auto *warning = new QLabel(tr("Conversion rebuilds the selected pages: links, forms and other interactive content are not preserved. Save a separate copy of important originals."), &settings);
     warning->setWordWrap(true); layout->addWidget(warning);
@@ -95,33 +90,9 @@ void PdfViewerWidget::recognizeSelectedPages()
     };
     connect(scope, &QComboBox::currentIndexChanged, &settings, updateTargets);
     layout->addWidget(targets); updateTargets();
-    auto *list = new QListWidget(&settings);
-    layout->addWidget(list);
-    const QStringList saved = QSettings().value("ocr/languages", QStringList{"spa", "eng"}).toStringList();
-    const auto populate = [&] {
-        list->clear();
-        for (const QString &code : OcrEngine::languages()) {
-            auto *item = new QListWidgetItem(languageName(code), list);
-            item->setData(Qt::UserRole, code);
-            item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
-            item->setCheckState(saved.contains(code) ? Qt::Checked : Qt::Unchecked);
-        }
-    };
-    populate();
-    auto *add = new QPushButton(tr("Add language pack…"), &settings);
-    layout->addWidget(add);
-    connect(add, &QPushButton::clicked, &settings, [&] {
-        const QString path = QFileDialog::getOpenFileName(&settings, tr("Add OCR language"), {},
-                                                        tr("Tesseract models (*.traineddata)"));
-        if (path.isEmpty()) return;
-        const QString directory = OcrEngine::additionalLanguagesDirectory();
-        QDir().mkpath(directory);
-        if (!QFile::copy(path, directory + '/' + QFileInfo(path).fileName())) {
-            QMessageBox::warning(&settings, tr("OCR"), tr("The language could not be added, or already exists."));
-            return;
-        }
-        populate();
-    });
+    auto *language = new QLabel(
+        tr("Document language: %1").arg(selectedLanguage), &settings);
+    layout->addWidget(language);
     auto *replaceText = new QCheckBox(tr("Reprocess pages that already contain text"), &settings);
     layout->addWidget(replaceText);
     auto *licenses = new QPushButton(tr("OCR licenses…"), &settings);
@@ -137,17 +108,12 @@ void PdfViewerWidget::recognizeSelectedPages()
         content->setPlainText(all); box->addWidget(content); dialog.exec();
     });
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &settings);
-    buttons->button(QDialogButtonBox::Ok)->setText(tr("Recognize and review"));
+    buttons->button(QDialogButtonBox::Ok)->setText(tr("Recognize text"));
     layout->addWidget(buttons);
     connect(buttons, &QDialogButtonBox::accepted, &settings, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, &settings, &QDialog::reject);
-    settings.resize(520, 540);
+    settings.resize(520, 390);
     if (settings.exec() != QDialog::Accepted) return;
-    QStringList selectedLanguages;
-    for (int i = 0; i < list->count(); ++i)
-        if (list->item(i)->checkState() == Qt::Checked) selectedLanguages.append(list->item(i)->data(Qt::UserRole).toString());
-    if (selectedLanguages.isEmpty()) { QMessageBox::information(this, tr("OCR"), tr("Select at least one language.")); return; }
-    QSettings().setValue("ocr/languages", selectedLanguages);
     QVector<int> indexes;
     if (scope->currentIndex() == 2) {
         indexes.resize(m_pageIds.size()); std::iota(indexes.begin(), indexes.end(), 0);
@@ -161,12 +127,11 @@ void PdfViewerWidget::recognizeSelectedPages()
     m_transformInProgress = true; emit operationInProgressChanged(true); syncEditControls();
     const auto document = m_document;
     const QPointer<PdfViewerWidget> self(this);
-    auto *thread = QThread::create([self, document, indexes, reconvert, selectedLanguages, progress, canceled] {
-        QVector<OcrPage> pages;
-        QVector<int> converted;
+    auto *thread = QThread::create([self, document, indexes, reconvert, selectedLanguage,
+                                    progress, canceled] {
         QString error;
-        QStringList skippedText, noText;
-        qint64 pixels = 0;
+        QStringList skippedText, noText, preservedAsImage;
+        int converted = 0;
         try {
             for (int i = 0; i < indexes.size() && !canceled->load(); ++i) {
                 const int index = indexes[i];
@@ -181,49 +146,111 @@ void PdfViewerWidget::recognizeSelectedPages()
                 const double width = size.width() * 300.0 / 72.0;
                 const double height = size.height() * 300.0 / 72.0;
                 if (!std::isfinite(width) || !std::isfinite(height) || width < 1 || height < 1
-                    || width * height > 24000000 || (pixels += qint64(width * height)) > 80000000) {
-                    error = text("This selection is too large for an OCR batch. Select fewer pages (up to 80 megapixels per batch)."); break;
+                    || width * height > 24000000) {
+                    error = text("This page is too large for OCR (maximum 24 megapixels).");
+                    break;
                 }
                 const QImage image = document->renderPage(index, qRound(width));
-                auto page = OcrEngine::recognize(image, size, selectedLanguages.join('+'), &error,
+                auto page = OcrEngine::recognize(image, size, selectedLanguage, &error,
                                                 [canceled] { return canceled->load(); });
                 if (!error.isEmpty() || canceled->load()) break;
-                qInfo() << "OCR page" << index + 1 << "languages" << selectedLanguages
+                qInfo() << "OCR page" << index + 1 << "language" << selectedLanguage
                         << "text boxes" << page.runs.size();
-                if (page.runs.isEmpty()) noText.append(QString::number(index + 1));
-                else { pages.append(std::move(page)); converted.append(index); }
+                // There is no pre-apply review in the Acrobat-like flow. Keep
+                // every usable recognition result; low-confidence text remains
+                // editable and can be corrected directly on the page afterward.
+                for (auto &run : page.runs)
+                    run.accepted = !run.text.trimmed().isEmpty() && !run.fontData.isEmpty();
+                const int editableBeforeBackground = std::count_if(
+                    page.runs.cbegin(), page.runs.cend(), [](const auto &run) {
+                        return run.accepted;
+                    });
+                const bool hasAccepted = std::any_of(
+                    page.runs.cbegin(), page.runs.cend(), [](const auto &run) {
+                        return run.accepted && !run.text.trimmed().isEmpty()
+                               && !run.fontData.isEmpty();
+                    });
+                if (!hasAccepted) {
+                    noText.append(QString::number(index + 1));
+                    continue;
+                }
+                QMetaObject::invokeMethod(qApp, [progress, index] {
+                    if (progress)
+                        progress->setLabelText(text("Building editable page %1…").arg(index + 1));
+                }, Qt::QueuedConnection);
+                if (!OcrEngine::prepareBackground(&page, [canceled] { return canceled->load(); }))
+                    break;
+                const int editableAfterBackground = std::count_if(
+                    page.runs.cbegin(), page.runs.cend(), [](const auto &run) {
+                        return run.accepted;
+                    });
+                if (editableAfterBackground < editableBeforeBackground)
+                    preservedAsImage.append(QString::number(index + 1));
+                const bool remainsEditable = std::any_of(
+                    page.runs.cbegin(), page.runs.cend(), [](const auto &run) {
+                        return run.accepted && !run.text.trimmed().isEmpty()
+                               && !run.fontData.isEmpty();
+                    });
+                if (!remainsEditable) {
+                    continue;
+                }
+                const QByteArray archive = PdfDocument::createOcrPagesArchive({page}, &error);
+                if (archive.isEmpty() || !error.isEmpty() || canceled->load()) break;
+                bool applied = false;
+                const auto pageApplied = std::make_shared<QSemaphore>();
+                QMetaObject::Connection operationConnection;
+                QMetaObject::Connection destroyedConnection;
+                QMetaObject::invokeMethod(qApp, [self, index, archive, &applied, pageApplied,
+                                                 &operationConnection, &destroyedConnection] {
+                    if (!self) return;
+                    // The OCR worker owns the outer progress state, while the
+                    // normal page replacement routine owns each individual
+                    // asynchronous replacement. Hand control over for this
+                    // page, then wake the OCR worker when it has really been
+                    // installed and recorded in undo history.
+                    self->m_transformInProgress = false;
+                    emit self->operationInProgressChanged(false);
+                    operationConnection = QObject::connect(
+                        self, &PdfViewerWidget::operationInProgressChanged,
+                        [pageApplied](bool busy) { if (!busy) pageApplied->release(); });
+                    destroyedConnection = QObject::connect(
+                        self, &QObject::destroyed, [pageApplied] { pageApplied->release(); });
+                    self->replacePagesFromArchive({index}, archive, text("Editable OCR"));
+                    if (self->m_editPdfButton) self->m_editPdfButton->setChecked(true);
+                    self->setSelectionMode(SelectionMode::Objects);
+                    applied = true;
+                }, Qt::BlockingQueuedConnection);
+                if (!applied) break;
+                pageApplied->acquire();
+                QObject::disconnect(operationConnection);
+                QObject::disconnect(destroyedConnection);
+                if (!self) break;
+                QMetaObject::invokeMethod(qApp, [self] {
+                    if (!self) return;
+                    self->m_transformInProgress = true;
+                    emit self->operationInProgressChanged(true);
+                    self->syncEditControls();
+                }, Qt::BlockingQueuedConnection);
+                ++converted;
                 QMetaObject::invokeMethod(qApp, [progress, i] { if (progress) progress->setValue(i + 1); }, Qt::QueuedConnection);
             }
         } catch (const std::exception &e) { error = QString::fromUtf8(e.what()); }
-        QMetaObject::invokeMethod(qApp, [self, pages, converted, skippedText, noText, error, progress, canceled]() mutable {
+        QMetaObject::invokeMethod(qApp, [self, converted, skippedText, noText, preservedAsImage,
+                                         error, progress,
+                                         canceled] {
             if (progress) progress->deleteLater();
             if (!self) return;
             self->m_transformInProgress = false; emit self->operationInProgressChanged(false); self->syncEditControls();
-            if (canceled->load()) return;
             if (!error.isEmpty()) { QMessageBox::warning(self, text("OCR"), error); return; }
+            if (canceled->load() && converted == 0) return;
             QStringList details;
             if (!skippedText.isEmpty()) details.append(text("Pages skipped because they already contain text: %1. Enable reprocessing to convert them.").arg(skippedText.join(", ")));
-            if (!noText.isEmpty()) details.append(text("OCR ran but found no text on pages: %1. Check the page selection, languages and scan orientation.").arg(noText.join(", ")));
-            if (pages.isEmpty()) {
-                QMessageBox::information(self, text("OCR"), details.join("\n\n")); return;
-            }
-            OcrReviewDialog review(std::move(pages), converted, self);
-            if (!details.isEmpty()) {
-                auto *notice = new QLabel(details.join("\n\n"), &review);
-                notice->setWordWrap(true);
-                qobject_cast<QVBoxLayout *>(review.layout())->insertWidget(0, notice);
-            }
-            if (review.exec() != QDialog::Accepted) return;
-            auto reviewed = review.pages();
-            QVector<OcrPage> accepted;
-            QVector<int> targets;
-            for (int i = 0; i < reviewed.size(); ++i) {
-                if (std::any_of(reviewed[i].runs.begin(), reviewed[i].runs.end(), [](const auto &run) {
-                        return run.accepted && !run.text.trimmed().isEmpty() && !run.fontData.isEmpty();
-                    })) { accepted.append(std::move(reviewed[i])); targets.append(converted[i]); }
-            }
-            if (accepted.isEmpty()) return;
-            self->applyOcrPages(std::move(accepted), targets);
+            if (!noText.isEmpty()) details.append(text("OCR ran but found no text on pages: %1. Check the page selection, document language and scan orientation.").arg(noText.join(", ")));
+            if (!preservedAsImage.isEmpty()) details.append(text("Some detected areas could not be safely separated from the background and were preserved as images on pages: %1.").arg(preservedAsImage.join(", ")));
+            if (canceled->load() && converted > 0)
+                details.prepend(text("OCR was canceled. Pages already completed were preserved."));
+            if (converted == 0 || !details.isEmpty())
+                QMessageBox::information(self, text("OCR"), details.join("\n\n"));
         }, Qt::QueuedConnection);
     });
     connect(thread, &QThread::finished, thread, &QThread::deleteLater); thread->start();
@@ -281,37 +308,7 @@ void PdfViewerWidget::editSelectedObject(bool removeObject)
     if (object.path.size() != 1) {
         QMessageBox::information(this, tr("Edit object"), tr("This object is inside a grouped form and cannot be removed or cropped individually.")); return;
     }
-    QRectF crop;
-    if (!removeObject) {
-        if (object.kind != PdfPageObjectKind::Image) return;
-        const QImage image = QImage::fromData(m_document->pageObjectImagePng(pageIndex, object.path));
-        if (image.isNull()) return;
-        QDialog dialog(this); dialog.setWindowTitle(tr("Crop image without moving text"));
-        auto *layout = new QVBoxLayout(&dialog);
-        auto *preview = new QLabel(&dialog); layout->addWidget(preview);
-        auto *form = new QFormLayout; layout->addLayout(form);
-        QVector<QDoubleSpinBox *> margins;
-        for (const QString &name : {tr("Left (%)"), tr("Top (%)"), tr("Right (%)"), tr("Bottom (%)")}) {
-            auto *spin = new QDoubleSpinBox(&dialog); spin->setRange(0, 99); spin->setDecimals(1);
-            margins.append(spin); form->addRow(name, spin);
-        }
-        auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog); layout->addWidget(buttons);
-        const auto update = [&] {
-            crop = QRectF(margins[0]->value() / 100, margins[1]->value() / 100,
-                           1 - (margins[0]->value() + margins[2]->value()) / 100,
-                           1 - (margins[1]->value() + margins[3]->value()) / 100);
-            buttons->button(QDialogButtonBox::Ok)->setEnabled(crop.width() > 0.01 && crop.height() > 0.01);
-            QImage shown = image.scaled(QSize(620, 430), Qt::KeepAspectRatio, Qt::SmoothTransformation);
-            QPainter painter(&shown); painter.setPen(QPen(Qt::red, 2));
-            painter.drawRect(QRectF(crop.x() * shown.width(), crop.y() * shown.height(),
-                                    crop.width() * shown.width(), crop.height() * shown.height())); painter.end();
-            preview->setPixmap(QPixmap::fromImage(shown));
-        };
-        for (auto *spin : margins) connect(spin, &QDoubleSpinBox::valueChanged, &dialog, update);
-        connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
-        connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-        update(); if (dialog.exec() != QDialog::Accepted) return;
-    }
+    const QRectF crop = removeObject ? QRectF() : m_imageCrop;
     const auto document = m_document;
     const QPointer<PdfViewerWidget> self(this);
     m_transformInProgress = true; emit operationInProgressChanged(true); syncEditControls();
@@ -325,4 +322,83 @@ void PdfViewerWidget::editSelectedObject(bool removeObject)
         }, Qt::QueuedConnection);
     });
     connect(thread, &QThread::finished, thread, &QThread::deleteLater); thread->start();
+}
+
+void PdfViewerWidget::beginImageCrop()
+{
+    if (!m_valid || m_transformInProgress || m_saveInProgress || m_objectPageIndex < 0
+        || m_selectedObject < 0 || m_selectedObject >= m_pageObjects.size()) return;
+    const auto &object = m_pageObjects[m_selectedObject];
+    if (object.kind != PdfPageObjectKind::Image || object.path.size() != 1 || object.bounds.isEmpty())
+        return;
+    m_croppingImage = true;
+    m_imageCrop = QRectF(0, 0, 1, 1);
+    m_cropDragHandle = -1;
+    updateSelectionOverlays();
+    m_scrollArea->setFocus();
+}
+
+void PdfViewerWidget::cancelImageCrop()
+{
+    if (!m_croppingImage && m_cropDragHandle < 0)
+        return;
+    m_croppingImage = false;
+    m_cropDragHandle = -1;
+    m_imageCrop = {};
+    updateSelectionOverlays();
+}
+
+void PdfViewerWidget::finishImageCrop()
+{
+    if (!m_croppingImage)
+        return;
+    const QRectF crop = m_imageCrop.normalized();
+    m_croppingImage = false;
+    m_cropDragHandle = -1;
+    const bool unchanged = crop.left() < 0.002 && crop.top() < 0.002
+                           && crop.width() > 0.996 && crop.height() > 0.996;
+    if (unchanged || crop.width() < 0.01 || crop.height() < 0.01) {
+        m_imageCrop = {};
+        updateSelectionOverlays();
+        return;
+    }
+    m_imageCrop = crop;
+    editSelectedObject(false);
+    m_imageCrop = {};
+}
+
+void PdfViewerWidget::updateImageCropDrag(const QPoint &position)
+{
+    if (m_cropDragHandle < 0 || m_selectedObject < 0 || m_selectedObject >= m_pageObjects.size())
+        return;
+    const QRect image = m_pageObjects[m_selectedObject].bounds;
+    if (image.width() < 2 || image.height() < 2)
+        return;
+    const double minW = 8.0 / image.width();
+    const double minH = 8.0 / image.height();
+    if (m_cropDragHandle == 8) {
+        const double dx = double(position.x() - m_cropPressPos.x()) / image.width();
+        const double dy = double(position.y() - m_cropPressPos.y()) / image.height();
+        double x = m_cropPressRect.x() + dx;
+        double y = m_cropPressRect.y() + dy;
+        x = qBound(0.0, x, 1.0 - m_cropPressRect.width());
+        y = qBound(0.0, y, 1.0 - m_cropPressRect.height());
+        m_imageCrop = QRectF(x, y, m_cropPressRect.width(), m_cropPressRect.height());
+        updateSelectionOverlays();
+        return;
+    }
+    const double nx = qBound(0.0, (position.x() - image.x()) / double(image.width()), 1.0);
+    const double ny = qBound(0.0, (position.y() - image.y()) / double(image.height()), 1.0);
+    QRectF crop = m_imageCrop;
+    const int handle = m_cropDragHandle;
+    if (handle == 0 || handle == 6 || handle == 7)
+        crop.setLeft(qMin(nx, crop.right() - minW));
+    if (handle == 2 || handle == 3 || handle == 4)
+        crop.setRight(qMax(nx, crop.left() + minW));
+    if (handle == 0 || handle == 1 || handle == 2)
+        crop.setTop(qMin(ny, crop.bottom() - minH));
+    if (handle == 4 || handle == 5 || handle == 6)
+        crop.setBottom(qMax(ny, crop.top() + minH));
+    m_imageCrop = crop.normalized();
+    updateSelectionOverlays();
 }

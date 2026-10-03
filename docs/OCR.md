@@ -3,21 +3,22 @@
 ## Uso
 
 1. Abrir un PDF escaneado y pulsar **OCR…** en la barra del visor.
-2. Elegir página actual, selección o documento y sus idiomas (se pueden combinar).
-   Español e inglés se seleccionan inicialmente; la selección se recuerda.
+2. Elegir página actual, selección o documento. El idioma de reconocimiento se
+   configura una vez en **Preferencias > OCR** y se usa en todos los documentos.
    El diálogo muestra los números de página antes de reconocer. En modo de
    edición de objetos se propone la página activa, no una selección de páginas
    conservada de una operación anterior. Los destinos quedan fijados al abrir
    el diálogo; un cambio del visor mientras tanto no los modifica.
-3. Revisar las líneas, corregir el texto y marcar cuáles convertir. Las de baja
-   confianza quedan desmarcadas. Lo desmarcado permanece en la imagen original.
-4. **Actualizar vista previa** permite comparar original con cajas, resultado
-   editable y fondo solo. **Aplicar OCR editable** realiza una única operación
-   reversible; cancelar antes de aplicarla deja el documento sin cambios.
+3. CualPDF reconoce y reconstruye una página por vez. Cada página terminada se
+   aplica inmediatamente y queda disponible en Deshacer; cancelar conserva las
+   páginas ya completadas. Las líneas de baja confianza permanecen en la imagen.
 5. En **Editar PDF**, doble clic en un texto para editarlo; arrastrarlo para
-   moverlo. El fondo es un objeto imagen independiente: clic derecho para
-   editar, recortar sin mover el texto o eliminar. Suprimir elimina el objeto
-   seleccionado, no la página. Deshacer/Rehacer recuperan cada operación.
+   moverlo. El fondo es un objeto imagen independiente. Clic derecho y
+   **Recortar imagen** muestra los mangos de Acrobat sobre esa imagen. Se pueden
+   mover varias veces; Enter, o un clic afuera, aplica el recorte y el texto
+   queda en su sitio. Esc cancela. Suprimir
+   elimina el objeto seleccionado, no la página. Deshacer/Rehacer recuperan
+   cada operación.
 
 Guardar una copia del original. La conversión reconstruye las páginas elegidas;
 no conserva enlaces, formularios, firmas digitales válidas ni estructura de
@@ -63,9 +64,10 @@ PDFium sigue protegido por el mutex global; los trabajos pesados van en workers.
   Fotografías, texturas, sellos superpuestos, tablas, fondos oscuros y tinta clara
   requieren revisar la vista previa; reconstruir píxeles tapados es aproximado.
   Regiones densas ambiguas se rechazan, sin sustituir la página original.
-- Límite: 24 megapíxeles por página, 80 por lote y tres minutos por reconocimiento
-  de página. La cancelación se comprueba entre etapas; inpainting/PDFium no se
-  interrumpen en mitad de una llamada. Reducir el lote para documentos extensos.
+- Límite: 24 megapíxeles por página y tres minutos por reconocimiento de página.
+  No hay límite total de páginas: se procesan y aplican de a una para mantener
+  acotada la memoria. La cancelación se comprueba entre etapas; inpainting/PDFium
+  no se interrumpen en mitad de una llamada.
 
 ## Distribución reproducible
 
@@ -96,14 +98,14 @@ ctest --test-dir build --output-on-failure -C Release
 ```
 
 `editable_ocr` usa Qt offscreen, fuentes incluidas y un TESSDATA_PREFIX inválido:
-comprueba los siete modelos, texto combinado con acentos, revisión, borrado de
-tinta, preservación de un gráfico, cajas posicionadas, edición y guardado,
+comprueba los siete modelos, texto con acentos, borrado de tinta, preservación
+de un gráfico, cajas posicionadas, edición y guardado,
 recorte/eliminación del fondo sin mover texto, restauración de archivos de
 páginas, cancelación, texto no compatible y entrada TSV inválida. El ejecutable
 de pruebas acepta opcionalmente un directorio para guardar PDFs/PNG de diagnóstico.
-También prueba el visor Qt real (offscreen): abrir OCR, cancelar la revisión sin
-modificar el documento, reconstruir la vista previa, aplicar, guardar, deshacer
-y rehacer con comprobación del contenido guardado en cada paso.
+También prueba el visor Qt real (offscreen): cancelar la configuración sin
+modificar el documento, aplicar OCR por página, guardar, deshacer y rehacer con
+comprobación del contenido guardado en cada paso.
 Los builds Windows/macOS necesitan validación en sus runners; probar Linux no
 demuestra por sí solo que los otros paquetes funcionen.
 

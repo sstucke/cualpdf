@@ -1,8 +1,11 @@
 #include "preferencesdialog.h"
 
 #include "appsettings.h"
+#include "ocrengine.h"
 
 #include <QCheckBox>
+#include <QComboBox>
+#include <QDir>
 #include <QDialogButtonBox>
 #include <QFrame>
 #include <QGroupBox>
@@ -10,6 +13,8 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QFileDialog>
+#include <QFileInfo>
+#include <QMessageBox>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSpinBox>
@@ -19,6 +24,14 @@ namespace {
 bool containsText(const QString &text, const QString &query)
 {
     return query.isEmpty() || text.contains(query, Qt::CaseInsensitive);
+}
+
+QString languageName(const QString &code)
+{
+    static const QHash<QString, QString> names{{"spa", "Español"}, {"eng", "English"},
+        {"fra", "Français"}, {"cat", "Català"}, {"por", "Português"},
+        {"ita", "Italiano"}, {"deu", "Deutsch"}};
+    return names.value(code, code) + " (" + code + ')';
 }
 }
 
@@ -30,12 +43,14 @@ PreferencesDialog::PreferencesDialog(AppSettings &settings, QWidget *parent)
     , m_tipsGroup(new QGroupBox(tr("Tips"), this))
     , m_windowsGroup(new QGroupBox(tr("Windows"), this))
     , m_editingGroup(new QGroupBox(tr("Editing"), this))
+    , m_ocrGroup(new QGroupBox(tr("OCR"), this))
     , m_backupRow(new QWidget(this))
     , m_retentionRow(new QWidget(this))
     , m_showTipsRow(new QWidget(this))
     , m_autoCloseTipsRow(new QWidget(this))
     , m_preserveExplorerRow(new QWidget(this))
     , m_imageEditorRow(new QWidget(this))
+    , m_ocrLanguageRow(new QWidget(this))
     , m_backupCheckBox(new QCheckBox(
           tr("Create a timestamped backup before overwriting a PDF"), m_backupRow))
     , m_retentionSpinBox(new QSpinBox(m_retentionRow))
@@ -48,6 +63,8 @@ PreferencesDialog::PreferencesDialog(AppSettings &settings, QWidget *parent)
     , m_imageEditorEdit(new QLineEdit(m_imageEditorRow))
     , m_imageEditorBrowseButton(new QPushButton(tr("Browse…"), m_imageEditorRow))
     , m_imageEditorClearButton(new QPushButton(tr("Use system default"), m_imageEditorRow))
+    , m_ocrLanguageCombo(new QComboBox(m_ocrLanguageRow))
+    , m_addOcrLanguageButton(new QPushButton(tr("Add language pack…"), m_ocrLanguageRow))
     , m_noResultsLabel(new QLabel(tr("No settings match your search."), this))
 {
     setWindowTitle(tr("Preferences"));
@@ -134,8 +151,24 @@ PreferencesDialog::PreferencesDialog(AppSettings &settings, QWidget *parent)
     imageEditorLayout->addLayout(imageEditorPathLayout);
     editingLayout->addWidget(m_imageEditorRow);
 
+    auto *ocrLayout = new QVBoxLayout(m_ocrGroup);
+    auto *ocrLanguageLayout = new QVBoxLayout(m_ocrLanguageRow);
+    ocrLanguageLayout->setContentsMargins(0, 0, 0, 0);
+    ocrLanguageLayout->addWidget(new QLabel(tr("Document language"), m_ocrLanguageRow));
+    auto *ocrLanguageControls = new QHBoxLayout();
+    ocrLanguageControls->addWidget(m_ocrLanguageCombo, 1);
+    ocrLanguageControls->addWidget(m_addOcrLanguageButton);
+    ocrLanguageLayout->addLayout(ocrLanguageControls);
+    auto *ocrLanguageDescription = new QLabel(
+        tr("This language is used by OCR in every document."), m_ocrLanguageRow);
+    ocrLanguageDescription->setWordWrap(true);
+    ocrLanguageDescription->setStyleSheet(QStringLiteral("color: palette(mid);"));
+    ocrLanguageLayout->addWidget(ocrLanguageDescription);
+    ocrLayout->addWidget(m_ocrLanguageRow);
+
     settingsLayout->addWidget(m_savingGroup);
     settingsLayout->addWidget(m_editingGroup);
+    settingsLayout->addWidget(m_ocrGroup);
     settingsLayout->addWidget(m_tipsGroup);
     settingsLayout->addWidget(m_windowsGroup);
     settingsLayout->addWidget(m_noResultsLabel);
@@ -160,6 +193,16 @@ PreferencesDialog::PreferencesDialog(AppSettings &settings, QWidget *parent)
     m_preserveExplorerCheckBox->setChecked(
         m_settings.preserveExplorerWhenClosingTabs());
     m_imageEditorEdit->setText(m_settings.imageEditorPath());
+    const auto populateOcrLanguages = [this] {
+        const QString selected = m_ocrLanguageCombo->currentData().toString().isEmpty()
+            ? m_settings.ocrLanguage() : m_ocrLanguageCombo->currentData().toString();
+        m_ocrLanguageCombo->clear();
+        for (const QString &code : OcrEngine::languages())
+            m_ocrLanguageCombo->addItem(languageName(code), code);
+        const int index = m_ocrLanguageCombo->findData(selected);
+        if (index >= 0) m_ocrLanguageCombo->setCurrentIndex(index);
+    };
+    populateOcrLanguages();
     connect(m_imageEditorBrowseButton, &QPushButton::clicked, this, [this]() {
         const QString path = QFileDialog::getOpenFileName(
             this, tr("Choose an image editor"), m_imageEditorEdit->text());
@@ -168,6 +211,22 @@ PreferencesDialog::PreferencesDialog(AppSettings &settings, QWidget *parent)
     });
     connect(m_imageEditorClearButton, &QPushButton::clicked, this, [this]() {
         m_imageEditorEdit->clear();
+    });
+    connect(m_addOcrLanguageButton, &QPushButton::clicked, this,
+            [this, populateOcrLanguages]() {
+        const QString path = QFileDialog::getOpenFileName(
+            this, tr("Add OCR language"), {}, tr("Tesseract models (*.traineddata)"));
+        if (path.isEmpty()) return;
+        const QString directory = OcrEngine::additionalLanguagesDirectory();
+        QDir().mkpath(directory);
+        if (!QFile::copy(path, directory + '/' + QFileInfo(path).fileName())) {
+            QMessageBox::warning(
+                this, tr("OCR"), tr("The language could not be added, or already exists."));
+            return;
+        }
+        populateOcrLanguages();
+        const int index = m_ocrLanguageCombo->findData(QFileInfo(path).completeBaseName());
+        if (index >= 0) m_ocrLanguageCombo->setCurrentIndex(index);
     });
     connect(m_backupCheckBox, &QCheckBox::toggled, m_retentionRow, &QWidget::setEnabled);
     connect(m_searchEdit, &QLineEdit::textChanged,
@@ -181,6 +240,7 @@ PreferencesDialog::PreferencesDialog(AppSettings &settings, QWidget *parent)
         tr("windows tabs close all preserve keep file explorer");
     m_imageEditorSearchText =
         tr("image editor external gimp paint photoshop png");
+    m_ocrLanguageSearchText = tr("ocr language document recognition tesseract");
     m_noResultsLabel->hide();
 }
 
@@ -191,6 +251,7 @@ void PreferencesDialog::filterSettings(const QString &query)
     const bool tipsGroupMatch = containsText(m_tipsGroup->title(), normalized);
     const bool windowsGroupMatch = containsText(m_windowsGroup->title(), normalized);
     const bool editingGroupMatch = containsText(m_editingGroup->title(), normalized);
+    const bool ocrGroupMatch = containsText(m_ocrGroup->title(), normalized);
     const bool backupVisible = savingGroupMatch
                                || containsText(m_backupCheckBox->text() + QLatin1Char(' ')
                                                    + m_backupSearchText,
@@ -220,16 +281,21 @@ void PreferencesDialog::filterSettings(const QString &query)
     m_autoCloseTipsRow->setVisible(autoCloseTipsVisible);
     const bool imageEditorVisible = editingGroupMatch
                                     || containsText(m_imageEditorSearchText, normalized);
+    const bool ocrLanguageVisible = ocrGroupMatch
+                                    || containsText(m_ocrLanguageSearchText, normalized);
     m_preserveExplorerRow->setVisible(preserveExplorerVisible);
     m_imageEditorRow->setVisible(imageEditorVisible);
+    m_ocrLanguageRow->setVisible(ocrLanguageVisible);
     m_savingGroup->setVisible(backupVisible || retentionVisible);
     m_tipsGroup->setVisible(showTipsVisible || autoCloseTipsVisible);
     m_windowsGroup->setVisible(preserveExplorerVisible);
     m_editingGroup->setVisible(imageEditorVisible);
+    m_ocrGroup->setVisible(ocrLanguageVisible);
     m_noResultsLabel->setVisible(!m_savingGroup->isVisible()
                                  && !m_tipsGroup->isVisible()
                                  && !m_windowsGroup->isVisible()
-                                 && !m_editingGroup->isVisible());
+                                 && !m_editingGroup->isVisible()
+                                 && !m_ocrGroup->isVisible());
 }
 
 void PreferencesDialog::saveAndAccept()
@@ -241,5 +307,6 @@ void PreferencesDialog::saveAndAccept()
     m_settings.setPreserveExplorerWhenClosingTabs(
         m_preserveExplorerCheckBox->isChecked());
     m_settings.setImageEditorPath(m_imageEditorEdit->text().trimmed());
+    m_settings.setOcrLanguage(m_ocrLanguageCombo->currentData().toString());
     accept();
 }

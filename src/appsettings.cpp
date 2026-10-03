@@ -10,6 +10,7 @@ constexpr auto kShowTipsAtStartupKey = "showTipsAtStartup";
 constexpr auto kAutoCloseTipsKey = "autoCloseTips";
 constexpr auto kPreserveExplorerWhenClosingTabsKey = "preserveExplorerWhenClosingTabs";
 constexpr auto kImageEditorPathKey = "imageEditorPath";
+constexpr auto kOcrLanguageKey = "ocr/language";
 constexpr auto kDefaultContentViewMode = static_cast<int>(AppSettings::ContentViewMode::Thumbnails);
 constexpr int kDefaultBackupVersionLimit = 5;
 }
@@ -109,4 +110,16 @@ QString AppSettings::imageEditorPath() const
 void AppSettings::setImageEditorPath(const QString &path)
 {
     m_settings.setValue(kImageEditorPathKey, path);
+}
+
+QString AppSettings::ocrLanguage() const
+{
+    const QString language = m_settings.value(kOcrLanguageKey, QStringLiteral("spa")).toString();
+    return language.isEmpty() ? QStringLiteral("spa") : language;
+}
+
+void AppSettings::setOcrLanguage(const QString &language)
+{
+    m_settings.setValue(kOcrLanguageKey,
+                        language.isEmpty() ? QStringLiteral("spa") : language);
 }
